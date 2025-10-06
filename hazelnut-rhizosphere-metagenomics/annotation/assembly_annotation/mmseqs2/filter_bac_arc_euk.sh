@@ -1,0 +1,62 @@
+# filter archaea
+grep "d_Archaea" B2.txt > B2_arc.txt
+grep "d_Archaea" B3.txt > B3_arc.txt
+grep "d_Archaea" B4.txt > B4_arc.txt
+grep "d_Archaea" B5.txt > B5_arc.txt
+grep "d_Archaea" R1P1.txt > R1P1_arc.txt
+grep "d_Archaea" R1P5.txt > R1P5_arc.txt
+grep "d_Archaea" R1P9.txt > R1P9_arc.txt
+grep "d_Archaea" R1P14.txt > R1P14_arc.txt
+grep "d_Archaea" R1P18.txt > R1P18_arc.txt
+grep "d_Archaea" R3P3.txt > R3P3_arc.txt
+grep "d_Archaea" R3P5.txt > R3P5_arc.txt
+grep "d_Archaea" R3P11.txt > R3P11_arc.txt
+grep "d_Archaea" R3P15.txt > R3P15_arc.txt
+grep "d_Archaea" R3P20.txt > R3P20_arc.txt
+grep "d_Archaea" R3P9_neg.txt > R3P9_neg_arc.txt
+grep "d_Archaea" R3P10_neg.txt > R3P10_neg_arc.txt
+grep "d_Archaea" R3P12_neg.txt > R3P12_neg_arc.txt
+grep "d_Archaea" R3P14_neg.txt > R3P14_neg_arc.txt
+grep "d_Archaea" R3P18_neg.txt > R3P18_neg_arc.txt
+
+# filter bacteria
+grep "d_Bacteria" B2.txt > B2_bac.txt
+grep "d_Bacteria" B3.txt > B3_bac.txt
+grep "d_Bacteria" B4.txt > B4_bac.txt
+grep "d_Bacteria" B5.txt > B5_bac.txt
+grep "d_Bacteria" R1P1.txt > R1P1_bac.txt
+grep "d_Bacteria" R1P5.txt > R1P5_bac.txt
+grep "d_Bacteria" R1P9.txt > R1P9_bac.txt
+grep "d_Bacteria" R1P14.txt > R1P14_bac.txt
+grep "d_Bacteria" R1P18.txt > R1P18_bac.txt
+grep "d_Bacteria" R3P3.txt > R3P3_bac.txt
+grep "d_Bacteria" R3P5.txt > R3P5_bac.txt
+grep "d_Bacteria" R3P11.txt > R3P11_bac.txt
+grep "d_Bacteria" R3P15.txt > R3P15_bac.txt
+grep "d_Bacteria" R3P20.txt > R3P20_bac.txt
+grep "d_Bacteria" R3P9_neg.txt > R3P9_neg_bac.txt
+grep "d_Bacteria" R3P10_neg.txt > R3P10_neg_bac.txt
+grep "d_Bacteria" R3P12_neg.txt > R3P12_neg_bac.txt
+grep "d_Bacteria" R3P14_neg.txt > R3P14_neg_bac.txt
+grep "d_Bacteria" R3P18_neg.txt > R3P18_neg_bac.txt
+
+# filter eukaryotes
+grep "d_Eukaryota" B2.txt > B2_euk.txt
+grep "d_Eukaryota" B3.txt > B3_euk.txt
+grep "d_Eukaryota" B4.txt > B4_euk.txt
+grep "d_Eukaryota" B5.txt > B5_euk.txt
+grep "d_Eukaryota" R1P1.txt > R1P1_euk.txt
+grep "d_Eukaryota" R1P5.txt > R1P5_euk.txt
+grep "d_Eukaryota" R1P9.txt > R1P9_euk.txt
+grep "d_Eukaryota" R1P14.txt > R1P14_euk.txt
+grep "d_Eukaryota" R1P18.txt > R1P18_euk.txt
+grep "d_Eukaryota" R3P3.txt > R3P3_euk.txt
+grep "d_Eukaryota" R3P5.txt > R3P5_euk.txt
+grep "d_Eukaryota" R3P11.txt > R3P11_euk.txt
+grep "d_Eukaryota" R3P15.txt > R3P15_euk.txt
+grep "d_Eukaryota" R3P20.txt > R3P20_euk.txt
+grep "d_Eukaryota" R3P9_neg.txt > R3P9_neg_euk.txt
+grep "d_Eukaryota" R3P10_neg.txt > R3P10_neg_euk.txt
+grep "d_Eukaryota" R3P12_neg.txt > R3P12_neg_euk.txt
+grep "d_Eukaryota" R3P14_neg.txt > R3P14_neg_euk.txt
+grep "d_Eukaryota" R3P18_neg.txt > R3P18_neg_euk.txt
