@@ -1,0 +1,1634 @@
+---
+title: "R_rhizosphere_analysis"
+format: html
+editor: visual
+---
+
+## 
+
+```{r}
+#| echo: false
+#| output: false
+
+# Load relevant packages
+library(tidyverse)
+library(phyloseq)
+
+## Upload and process relevant mmseqs2 data. Create phyloseq objects for mmseqs2 output (phylum, class, genus, species level). 
+
+# Get relevant file paths from directory (mmseqs2)
+file_paths_total <- list.files("/Users/johnrobinson/Desktop/rhizosphere_2025/krona_input_2024_09_25/", pattern = "(phylum|phylum_bac|phylum_arc|phylum_euk|class|class_bac|class_arc|class_euk|genus|genus_bac|genus_arc|genus_euk|species|species_bac|species_arc|species_euk)[.]txt$", recursive = TRUE, full.names = TRUE)
+
+# Combine all entries from relevant files into single data frame (mmseqs2)
+rhizosphere_full_df <- file_paths_total |>
+  set_names()|> 
+  map(~read.delim(., header = FALSE)) |> 
+  list_rbind(names_to = "source_file") |>
+  mutate(source_file = basename(source_file))
+
+# Function that can be used to divide full data frame into multiple data frames at lower taxonomic levels based on source file of interest (mmseqs2)
+taxonomy_categories <- c("phylum.txt", "phylum_bac.txt", "phylum_arc.txt", "phylum_euk.txt", "class.txt", "class_bac.txt", "class_arc.txt", "class_euk.txt","genus.txt", "genus_bac.txt", "genus_arc.txt", "genus_euk.txt", "species.txt", "species_bac.txt", "species_arc.txt", "species_euk.txt")
+
+get_dfs_as_list <- function(source_file_categories, df, source_col) {
+  result <- list()
+  for (i in source_file_categories) {
+    result[[i]] <- df |> 
+             filter(str_detect({{source_col}}, i))
+  }
+  return(result)
+}
+
+# Create data frame list (mmseqs2)
+mmseqs_df_list <- get_dfs_as_list(taxonomy_categories, rhizosphere_full_df, source_file)
+
+# Function to transform data in list of data frames of interest to proper format
+transform_df_list <- function(df_list, source_col, taxa_col, num_col) {
+  result <- list()
+  list_names <- names(df_list)
+  for (i in list_names) {
+    current_df <- df_list[[i]]
+    result[[i]] <- current_df |> group_by({{source_col}}, {{taxa_col}}) |>  
+    mutate({{num_col}} := sum({{num_col}}, na.rm = TRUE)) |> 
+    ungroup() |>
+    distinct() |>
+    group_by({{source_col}}) |>
+    mutate(sum_per_sample = sum({{num_col}})) |>
+    mutate(V1_relative_abundance = {{num_col}} / sum_per_sample) |>
+    ungroup() |>
+    select({{taxa_col}}, V1_relative_abundance, {{source_col}}) |>
+    pivot_wider(names_from = {{source_col}}, values_from = V1_relative_abundance) |>
+    mutate(across(where(is.numeric), ~replace_na(., 0)))
+  }
+  return(result)
+}
+
+# Transform data frames in list (mmseqs2)
+refined_mmseqs_df_list <- transform_df_list(mmseqs_df_list, source_file, V2, V1)
+
+# Function that makes list of phyloseq objects from list of data frames
+process_df_to_phyloseq <- function(df_list) {
+  result <- list()
+  list_names <- names(df_list)
+  for (i in list_names) {
+    #create OTU matrix
+    current_df <- df_list[[i]]
+    current_df_reduced <- current_df[,-1]
+    col_name_pattern <- "(B2|B3|B4|B5|R1P1(?![0-9])|R1P14|R1P18|R1P5|R1P9|R3P10_neg|R3P11|R3P12_neg|R3P14_neg|R3P15|R3P18_neg|R3P20|R3P9_neg|R3P5|R3P3)"
+    current_df_reduced <- current_df_reduced |>
+      rename_with(~str_extract(., col_name_pattern)) |>
+      select("B2", "B3", "B4", "B5", "R1P1", "R1P5", "R1P9", "R1P14", "R1P18", "R3P3", "R3P5", "R3P11", "R3P15", "R3P20", "R3P9_neg", "R3P10_neg", "R3P12_neg", "R3P14_neg", "R3P18_neg")
+    current_mat <- as.matrix(current_df_reduced)
+    rownames(current_mat) <- current_df$V2
+    OTU_current <- otu_table(current_mat, taxa_are_rows = TRUE)
+    #create sample data frame
+    sample_dataframe <- data.frame(
+    Condition = c("Bulk soil", "Bulk soil", "Bulk soil", "Bulk soil", "Native", "Native", "Native", "Native", "Native", "Susceptible", "Susceptible", "Susceptible", "Susceptible", "Susceptible", "Resistant", "Resistant", "Resistant", "Resistant", "Resistant"),
+    Sample_Identity = c("B2", "B3", "B4", "B5", "R1P1", "R1P5", "R1P9", "R1P14", "R1P18", "R3P3", "R3P5", "R3P11", "R3P15", "R3P20", "R3P9_neg", "R3P10_neg", "R3P12_neg", "R3P14_neg", "R3P18_neg"),
+    row.names = c("B2", "B3", "B4", "B5", "R1P1", "R1P5", "R1P9", "R1P14", "R1P18", "R3P3", "R3P5", "R3P11", "R3P15", "R3P20", "R3P9_neg", "R3P10_neg", "R3P12_neg", "R3P14_neg", "R3P18_neg")
+    )
+    SAMPLE_DATA_current <- sample_data(sample_dataframe)
+    #create taxonomy matrix
+    current_tax_df <- data.frame(
+    tax_ID = current_df$V2,
+    row.names = current_df$V2
+    ) 
+    current_taxmat <- as.matrix(current_tax_df)
+    TAX_current <- tax_table(current_taxmat)
+    #create physeq object
+    physeq_current = phyloseq(OTU_current, SAMPLE_DATA_current, TAX_current)
+    result[[i]] <- physeq_current
+  }
+  return(result)
+}
+
+# Get phyloseq objects from list of data frames
+physeq_object_list_mmseqs <- process_df_to_phyloseq(refined_mmseqs_df_list)
+
+## Upload bracken data (phylum, genus, species)
+combined_phylum_bracken <- read.delim("/Users/johnrobinson/Desktop/rhizosphere_2025/hazelnut_metagenomics_10_17_2024/kraken2_confidence_051/kraken2_confidence_0.51_data_and_inital_scripts/combined.phylum.bracken", header = TRUE)
+combined_genus_bracken <- read.delim("/Users/johnrobinson/Desktop/rhizosphere_2025/hazelnut_metagenomics_10_17_2024/kraken2_confidence_051/kraken2_confidence_0.51_data_and_inital_scripts/combined.genus.bracken", header = TRUE)
+combined_species_bracken <- read.delim("/Users/johnrobinson/Desktop/rhizosphere_2025/hazelnut_metagenomics_10_17_2024/kraken2_confidence_051/kraken2_confidence_0.51_data_and_inital_scripts/combined.species.bracken", header = TRUE)
+
+## Create list of bracken data frames with relative abundance values and create corresponding phyloseq objects
+# Remove unneeded columns (get relative abundance)
+combined_phylum_bracken_1 <- combined_phylum_bracken |> dplyr::select("name", "Control_B2.phylum.bracken_frac", "Control_B3.phylum.bracken_frac", "Control_B4.phylum.bracken_frac", "Control_B5.phylum.bracken_frac", "R1P1.phylum.bracken_frac", "R1P14.phylum.bracken_frac", "R1P18.phylum.bracken_frac", "R1P5.phylum.bracken_frac", "R1P9.phylum.bracken_frac",  "R3P10_neg.phylum.bracken_frac", "R3P11.phylum.bracken_frac", "R3P12_neg.phylum.bracken_frac", "R3P14_neg.phylum.bracken_frac", "R3P15.phylum.bracken_frac", "R3P18_neg.phylum.bracken_frac", "R3P20.phylum.bracken_frac", "R3P3.phylum.bracken_frac", "R3P5.phylum.bracken_frac", "R3P9_neg.phylum.bracken_frac")
+
+# Remove unneeded columns (get relative abundance)
+combined_genus_bracken_1 <- combined_genus_bracken |> dplyr::select("name", "Control_B2.genus.bracken_frac", "Control_B3.genus.bracken_frac", "Control_B4.genus.bracken_frac", "Control_B5.genus.bracken_frac", "R1P1.genus.bracken_frac", "R1P14.genus.bracken_frac", "R1P18.genus.bracken_frac", "R1P5.genus.bracken_frac", "R1P9.genus.bracken_frac",  "R3P10_neg.genus.bracken_frac", "R3P11.genus.bracken_frac", "R3P12_neg.genus.bracken_frac", "R3P14_neg.genus.bracken_frac", "R3P15.genus.bracken_frac", "R3P18_neg.genus.bracken_frac", "R3P20.genus.bracken_frac", "R3P3.genus.bracken_frac", "R3P5.genus.bracken_frac", "R3P9_neg.genus.bracken_frac")
+
+# Remove unneeded columns (get relative abundance)
+combined_species_bracken_1 <- combined_species_bracken |> dplyr::select("name", "Control_B2.species.bracken_frac", "Control_B3.species.bracken_frac", "Control_B4.species.bracken_frac", "Control_B5.species.bracken_frac", "R1P1.species.bracken_frac", "R1P14.species.bracken_frac", "R1P18.species.bracken_frac", "R1P5.species.bracken_frac", "R1P9.species.bracken_frac",  "R3P10_neg.species.bracken_frac", "R3P11.species.bracken_frac", "R3P12_neg.species.bracken_frac", "R3P14_neg.species.bracken_frac", "R3P15.species.bracken_frac", "R3P18_neg.species.bracken_frac", "R3P20.species.bracken_frac", "R3P3.species.bracken_frac", "R3P5.species.bracken_frac", "R3P9_neg.species.bracken_frac")
+
+# Generate bracken list with data frames that have unneeded columns removed
+bracken_list <- list(combined_phylum_bracken_1 = combined_phylum_bracken_1, combined_genus_bracken_1 = combined_genus_bracken_1, combined_species_bracken_1 = combined_species_bracken_1)
+
+# Rename relevant columns in bracken
+bracken_list[[1]] <- bracken_list[[1]] |> rename(V2 = name)
+bracken_list[[2]] <- bracken_list[[2]] |> rename(V2 = name)
+bracken_list[[3]] <- bracken_list[[3]] |> rename(V2 = name)
+
+# Execute function to generate list of phyloseq objects from bracken data
+physeq_object_list_bracken <- process_df_to_phyloseq(bracken_list)
+
+## Create list of bracken data frames with count values and relative abundance (percentage). Data in this format will be used in ancombc2.
+# Remove unneeded columns (get counts)
+combined_phylum_bracken_num <- combined_phylum_bracken |> dplyr::select("name", "Control_B2.phylum.bracken_num", "Control_B3.phylum.bracken_num", "Control_B4.phylum.bracken_num", "Control_B5.phylum.bracken_num", "R1P1.phylum.bracken_num", "R1P14.phylum.bracken_num", "R1P18.phylum.bracken_num", "R1P5.phylum.bracken_num", "R1P9.phylum.bracken_num",  "R3P10_neg.phylum.bracken_num", "R3P11.phylum.bracken_num", "R3P12_neg.phylum.bracken_num", "R3P14_neg.phylum.bracken_num", "R3P15.phylum.bracken_num", "R3P18_neg.phylum.bracken_num", "R3P20.phylum.bracken_num", "R3P3.phylum.bracken_num", "R3P5.phylum.bracken_num", "R3P9_neg.phylum.bracken_num")
+
+# Remove unneeded columns (get counts)
+combined_genus_bracken_num <- combined_genus_bracken |> dplyr::select("name", "Control_B2.genus.bracken_num", "Control_B3.genus.bracken_num", "Control_B4.genus.bracken_num", "Control_B5.genus.bracken_num", "R1P1.genus.bracken_num", "R1P14.genus.bracken_num", "R1P18.genus.bracken_num", "R1P5.genus.bracken_num", "R1P9.genus.bracken_num",  "R3P10_neg.genus.bracken_num", "R3P11.genus.bracken_num", "R3P12_neg.genus.bracken_num", "R3P14_neg.genus.bracken_num", "R3P15.genus.bracken_num", "R3P18_neg.genus.bracken_num", "R3P20.genus.bracken_num", "R3P3.genus.bracken_num", "R3P5.genus.bracken_num", "R3P9_neg.genus.bracken_num")
+
+# Remove unneeded columns (get counts)
+combined_species_bracken_num <- combined_species_bracken |> dplyr::select("name", "Control_B2.species.bracken_num", "Control_B3.species.bracken_num", "Control_B4.species.bracken_num", "Control_B5.species.bracken_num", "R1P1.species.bracken_num", "R1P14.species.bracken_num", "R1P18.species.bracken_num", "R1P5.species.bracken_num", "R1P9.species.bracken_num",  "R3P10_neg.species.bracken_num", "R3P11.species.bracken_num", "R3P12_neg.species.bracken_num", "R3P14_neg.species.bracken_num", "R3P15.species.bracken_num", "R3P18_neg.species.bracken_num", "R3P20.species.bracken_num", "R3P3.species.bracken_num", "R3P5.species.bracken_num", "R3P9_neg.species.bracken_num")
+
+# Generate bracken list with data frames that have unneeded columns removed
+bracken_list_num <- list(combined_phylum_bracken_1 = combined_phylum_bracken_num, combined_genus_bracken_1 = combined_genus_bracken_num, combined_species_bracken_1 = combined_species_bracken_num)
+
+# Rename relevant columns in bracken
+bracken_list_num[[1]] <- bracken_list_num[[1]] |> rename(V2 = name)
+bracken_list_num[[2]] <- bracken_list_num[[2]] |> rename(V2 = name)
+bracken_list_num[[3]] <- bracken_list_num[[3]] |> rename(V2 = name)
+
+# Function to reformat list of bracken data frames
+transform_bracken_to_mmseqs_initial_format <- function(df_list) {
+  result <- list() 
+  list_names <- names(df_list) 
+  for (i in list_names) {
+    current_df <- df_list[[i]]
+    result[[i]] <- current_df |>
+      pivot_longer(names_to = "source_file", values_to = "V1", cols = colnames(current_df[2:20])) |>
+      select(source_file, V1, V2)
+  }
+  return(result)
+}
+
+# Reformat list of bracken data frames (get bracken count output as proper format for ancombc2)
+bracken_num_df_list_ancom <- transform_bracken_to_mmseqs_initial_format(bracken_list_num)
+
+# Reformat list of bracken data frames (get bracken relative abundance output as proper format for ancombc2
+bracken_ra_df_list_ancom <- transform_df_list(bracken_num_df_list_ancom, source_file, V2, V1)
+```
+
+```{r}
+#| label: fig-A
+#| fig-cap: Alpha and Beta Diversity
+#| fig-width: 15
+#| fig-height: 15
+#| fig-align: center
+#| out-width: 100%
+#| echo: false
+#| warning: false
+
+# Load relevant packages
+library(vegan)
+library(ggpubr)
+library(pairwiseAdonis)
+library(patchwork)
+
+# Sample order
+desired_order <- c("B2", "B3", "B4", "B5", "R1P1", "R1P5", "R1P9", "R1P14", "R1P18", "R3P3", "R3P5", "R3P11", "R3P15", "R3P20", "R3P9_neg", "R3P10_neg", "R3P12_neg", "R3P14_neg", "R3P18_neg")
+
+# Function that plots alpha diversity from list of phyloseq objects
+get_alpha <- function(physeq_object_list, alpha_diversity_measure) {
+  result <- list()
+  list_names <- names(physeq_object_list)
+  for (i in list_names) {
+    current_physeq_obj <- physeq_object_list[[i]]
+    sample_data(current_physeq_obj)$Condition <- factor(sample_data(current_physeq_obj)$Condition, levels = c("Bulk soil", "Native", "Susceptible", "Resistant"))
+    colours <- c("Bulk soil" = "black", "Native" = "maroon", "Susceptible" = "plum", "Resistant" = "paleturquoise")
+    current_alpha <- plot_richness(current_physeq_obj, measures = alpha_diversity_measure, x = "samples", color = "Condition") + geom_smooth(method = lm) +
+      geom_point(size=2) +
+      labs(title = i, x = "Sample") +
+      scale_color_manual(values = colours) +
+      stat_cor() +
+      theme_bw() + theme(title = element_text(color = "black", size = 25), text = element_text(size = 20), axis.text.x = element_text(angle = 90, hjust = 1)) + scale_x_discrete(limits = desired_order) 
+    result[[i]] <- current_alpha
+  }
+  return(result)
+}
+
+# Function that plots alpha diversity from list of phyloseq objects
+get_alpha_boxplot <- function(physeq_object_list, alpha_diversity_measure) {
+  result <- list()
+  list_names <- names(physeq_object_list)
+  for (i in list_names) {
+    current_physeq_obj <- physeq_object_list[[i]]
+    sample_data(current_physeq_obj)$Condition <- factor(sample_data(current_physeq_obj)$Condition, levels = c("Bulk soil", "Native", "Susceptible", "Resistant"))
+    colours <- c("Bulk soil" = "black", "Native" = "maroon", "Susceptible" = "plum", "Resistant" = "paleturquoise")
+    current_alpha <- plot_richness(current_physeq_obj, measures = alpha_diversity_measure, x = "Condition", color = "Condition") + geom_smooth(method = lm) +
+      geom_boxplot() +
+      #labs(title = i, x = "Condition") +
+      labs(x = "Condition") +
+      scale_color_manual(values = colours) +
+      stat_cor() +
+      theme_bw() + theme(title = element_text(color = "black", size = 15), text = element_text(size = 15), axis.text.x = element_text(angle = 90, hjust = 1))
+    result[[i]] <- current_alpha
+  }
+  return(result)
+}
+
+# Function that plots alpha diversity from list of phyloseq objects
+get_alpha_bar <- function(physeq_object_list, alpha_diversity_measure) {
+  result <- list()
+  list_names <- names(physeq_object_list)
+  for (i in list_names) {
+    current_physeq_obj <- physeq_object_list[[i]]
+    sample_data(current_physeq_obj)$Condition <- factor(sample_data(current_physeq_obj)$Condition, levels = c("Bulk soil", "Native", "Susceptible", "Resistant"))
+    colours <- c("Bulk soil" = "black", "Native" = "maroon", "Susceptible" = "plum", "Resistant" = "paleturquoise")
+    current_alpha <- plot_richness(current_physeq_obj, measures = alpha_diversity_measure, x = "Condition", color = "Condition")
+    current_alpha$layers[[1]]$aes_params$alpha <- 0 
+    current_alpha_final <- current_alpha +
+      stat_summary(fun = mean, geom = "bar", aes(fill = Condition), alpha = 0.5) +
+      geom_jitter(width = 0.08) +
+      labs(x = "Condition",
+           y = paste0(alpha_diversity_measure, " Diversity Index")) +
+      scale_color_manual(values = colours) +
+      scale_fill_manual(values = colours) +
+      stat_cor() +
+      theme_bw() + 
+      theme(title = element_text(color = "black", size = 15), text = element_text(size = 15), axis.text.x = element_text(angle = 90, hjust = 1), strip.text = element_blank())
+    if(alpha_diversity_measure == "Shannon") {
+      current_alpha_final <- current_alpha_final +
+        scale_y_continuous(breaks = c(3.7, 3.8, 3.9, 4.0, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8)) +
+        coord_cartesian(ylim = c(3.7, 4.8))
+    } else {
+      current_alpha_final <- current_alpha_final +
+        scale_y_continuous(breaks = c(0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98)) +
+        coord_cartesian(ylim = c(0.88, 0.98))
+    } 
+    result[[i]] <- current_alpha_final
+  }
+  return(result)
+}
+
+# Function that plots beta diversity from list of phyloseq objects
+get_beta <- function(physeq_object_list, plot_type, distance_matrix_type, taxonomy_scale = "yes") {
+  result <- list()
+  list_names <- names(physeq_object_list)
+  for (i in list_names) {
+    current_physeq_obj <- physeq_object_list[[i]]
+    pso <- ordinate(current_physeq_obj, plot_type, distance_matrix_type)
+    sample_data(current_physeq_obj)$Condition <- factor(sample_data(current_physeq_obj)$Condition, levels = c("Bulk soil", "Native", "Susceptible", "Resistant"))
+    colours = c("black", "maroon", "plum", "paleturquoise")
+    ordplot5 <- plot_ordination(current_physeq_obj, pso, type = "Sample_Identity", color = "Condition")
+    x_label_initial <- ordplot5$labels$x
+    y_label_initial <- ordplot5$labels$y
+    current_beta <- ordplot5 + theme_bw() + theme(aspect.ratio = 1) +
+      geom_point(size = 5) + 
+      labs(
+        x = paste0("PC1", x_label_initial),
+        y = paste0("PC2", y_label_initial)
+      ) + 
+      theme(panel.grid.minor = element_blank()) +
+      scale_color_manual(values = colours) +
+      theme(title = element_text(color = "black", size = 15), text = element_text(size = 15), axis.ticks = element_line(color = "black"), axis.text = element_text(color = "black", size = 15))
+    if(taxonomy_scale == "no") {
+      current_beta <- current_beta +
+      scale_x_continuous(limits = c(-0.4, 0.4), 
+                         breaks = c(-0.4, -0.3, -0.2, -0.1, 0, 0.1, 0.2, 0.3, 0.4)) +
+      scale_y_continuous(limits = c(-0.4, 0.4), 
+                         breaks = c(-0.4, -0.3, -0.2, -0.1, 0, 0.1, 0.2, 0.3, 0.4))
+    } else {
+      current_beta <- current_beta +
+      scale_x_continuous(limits = c(-0.3, 0.3), 
+                         breaks = c(-0.3, -0.2, -0.1, 0, 0.1, 0.2, 0.3)) +
+      scale_y_continuous(limits = c(-0.3, 0.3), 
+                         breaks = c(-0.3, -0.2, -0.1, 0, 0.1, 0.2, 0.3))}
+    result[[i]] <- current_beta
+  }
+  return(result)
+}
+
+# Function that performs kruskal-wallis rank sum test on list of phyloseq objects
+get_kruskal_wallis <- function(physeq_object_list, measure_type) {
+  result <- list()
+  list_names <- names(physeq_object_list)
+  for (i in list_names) {
+    current_physeq_obj <- physeq_object_list[[i]]
+    current_alpha <- estimate_richness(current_physeq_obj, measures = c("observed", measure_type))
+    current_kruskal_wallis <- kruskal.test(current_alpha[,1] ~ sample_data(current_physeq_obj)$Condition)
+    result[[i]] <- current_kruskal_wallis
+  }
+  return(result)
+}
+
+# Function that performs PERMANOVA on list of phyloseq objects
+get_PERMANOVA <- function(physeq_object_list, distance_matrix) {
+  result <- list()
+  list_names <- names(physeq_object_list)
+  for (i in list_names) {
+    current_physeq_obj <- physeq_object_list[[i]]
+    current_beta <- phyloseq::distance(current_physeq_obj, method = distance_matrix)
+    current_permanova <- adonis2(current_beta ~ sample_data(current_physeq_obj)$Condition)
+    result[[i]] <- current_permanova
+  }
+  return(result)
+}
+
+# Function that performs pairwise_Adonis on list of phyloseq objects
+get_pairwise_Adonis <- function(physeq_object_list, distance_matrix) { 
+  result <- list()
+  list_names <- names(physeq_object_list)
+  for (i in list_names) {
+    current_physeq_obj <- physeq_object_list[[i]]
+    current_beta <- phyloseq::distance(current_physeq_obj, method = distance_matrix)
+    current_pairwise_adonis <- pairwise.adonis(current_beta, sample_data(current_physeq_obj)$Condition, sim.method = distance_matrix, perm = 99999)
+    result[[i]] <- current_pairwise_adonis
+  }
+  return(result)
+}
+
+# Execute function to get a list of alpha diversity plots
+alpha_mmseqs <- get_alpha(physeq_object_list_mmseqs, "Shannon")
+alpha_bracken <- get_alpha(physeq_object_list_bracken, "Shannon")
+
+# Execute function to get a list of alpha diversity plots (as boxplots)
+alpha_mmseqs_boxplot <- get_alpha_boxplot(physeq_object_list_mmseqs, "Shannon")
+alpha_bracken_boxplot <- get_alpha_boxplot(physeq_object_list_bracken, "Shannon")
+
+# Execute function to get a list of alpha diversity plots (as bar)
+alpha_mmseqs_bar_sh <- get_alpha_bar(physeq_object_list_mmseqs, "Shannon")
+alpha_bracken_bar_sh <- get_alpha_bar(physeq_object_list_bracken, "Shannon")
+alpha_mmseqs_bar_si <- get_alpha_bar(physeq_object_list_mmseqs, "Simpson")
+alpha_bracken_bar_si <- get_alpha_bar(physeq_object_list_bracken, "Simpson")
+
+# Execute function to get a list of beta diversity plots
+beta_mmseqs <- get_beta(physeq_object_list_mmseqs, "PCoA", "bray")
+beta_bracken <- get_beta(physeq_object_list_bracken, "PCoA", "bray")
+
+# Execute function to get a list of p-values from kruskal wallis
+kruskal_test_mmseqs <- get_kruskal_wallis(physeq_object_list_mmseqs, "simpson")
+kruskal_test_bracken <- get_kruskal_wallis(physeq_object_list_bracken, "shannon")
+
+# Execute function to get a list of p-values from PERMANOVA
+permanova_test_mmseqs <- get_PERMANOVA(physeq_object_list_mmseqs, "bray")
+permanova_test_bracken <- get_PERMANOVA(physeq_object_list_bracken, "bray")
+
+# Execute function to get a list of p-values from pairwise.Adonis
+pairwise_Adonis_test_mmseqs <- get_pairwise_Adonis(physeq_object_list_mmseqs, "bray")
+pairwise_Adonis_test_bracken <- get_pairwise_Adonis(physeq_object_list_bracken, "bray")
+
+pairwise_Adonis_test_bracken
+# Function that will create list of combined alpha and beta diversity plots using patchwork
+plot_patchwork <- function(plot_list_alpha, plot_list_beta) {
+  result <- list()
+  list_names <- names(plot_list_alpha)
+  for (i in list_names) {
+    current_alpha <- plot_list_alpha[[i]]
+    current_beta <- plot_list_beta[[i]]
+    current_plot <- (current_alpha + theme(plot.margin = unit(c(0,30,0,0), "pt"))) +
+    (current_beta + theme(plot.margin = unit(c(0,0,0,30), "pt")))
+    result[[i]] <- current_plot
+  }
+  return(result)
+}
+
+# Execute patchwork function
+mmseqs_patchwork_alpha_beta <- plot_patchwork(alpha_mmseqs_boxplot, beta_mmseqs)
+mmseqs_patchwork_alpha_beta
+
+bracken_patchwork_alpha_beta <- plot_patchwork(alpha_bracken_boxplot, beta_bracken)
+bracken_patchwork_alpha_beta
+
+# Execute to save species level alpha and beta diversity as .pdf and .svg
+#library(svglite)
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/1a.pdf", plot = alpha_mmseqs_bar_sh[[13]], width = 6, height = 7, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/1a.svg", plot = alpha_mmseqs_bar_sh[[13]], width = 6, height = 7, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/1b.pdf", plot = alpha_mmseqs_bar_si[[13]], width = 6, height = 7, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/1b.svg", plot = alpha_mmseqs_bar_si[[13]], width = 6, height = 7, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/1c.pdf", plot = beta_mmseqs[[13]], width = 6, height = 7, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/1c.svg", plot = beta_mmseqs[[13]], width = 6, height = 7, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/1_bracken_a.pdf", plot = alpha_bracken_boxplot[[3]], width = 6, height = 7, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/1_bracken_b.pdf", plot = alpha_bracken_boxplot[[3]], width = 6, height = 7, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/1_bracken_c.pdf", plot = beta_bracken[[3]], width = 6, height = 7, units = "in")
+```
+
+```{r}
+#| label: fig-B
+#| fig-cap: Relative Abundance
+#| fig-width: 60
+#| fig-height: 30
+#| fig-align: center
+#| out-width: 100%
+#| echo: false
+#| warning: false
+
+# Load relevant packages
+library(randomcoloR)
+
+# Function to CONVERT VALUES TO PERCENTAGE, rename samples, filter based on threshold (if any value in row greater than or equal to threshold, keep row), and rearrange data frames
+filter_by_threshold <- function(df_list, threshold) {
+  result <- list()
+  list_names <- names(df_list)
+  for (i in list_names) {
+    current_df <- df_list[[i]] 
+    col_name_pattern <- "(V2|B2|B3|B4|B5|R1P1(?![0-9])|R1P14|R1P18|R1P5|R1P9|R3P10_neg|R3P11|R3P12_neg|R3P14_neg|R3P15|R3P18_neg|R3P20|R3P9_neg|R3P5|R3P3)"
+    current_df_cleaned <- current_df |>
+      rename_with(~str_extract(., col_name_pattern))
+    current_df_final <- current_df_cleaned |>
+      mutate(across(where(is.numeric), ~ . * 100)) |>
+      filter(if_any(where(is.numeric), ~ . >= threshold)) |>
+      pivot_longer(
+        cols = 2:20,
+        names_to = "source",
+        values_to = "V1_percentage"
+      )
+    result[[i]] <- current_df_final
+  }
+  return(result)
+}
+
+# Execute function to filter by threshold (both bracken and mmseqs2)
+dfs_filtered_by_threshold_mmseqs <- filter_by_threshold(refined_mmseqs_df_list, 1.0) 
+dfs_filtered_by_threshold_bracken <- filter_by_threshold(bracken_list, 1.0)
+
+# Colour scheme
+colours_bubble = c("B2"="black", "B3"="black", "B4"="black", "B5"="black", "R1P1"="maroon", "R1P5"="maroon", "R1P9"="maroon","R1P14"="maroon","R1P18"="maroon", "R3P3"="plum", "R3P5"="plum", "R3P11"="plum","R3P15"="plum", "R3P20"="plum", "R3P9_neg"="paleturquoise", "R3P10_neg"="paleturquoise", "R3P12_neg"="paleturquoise", "R3P14_neg"="paleturquoise", "R3P18_neg"="paleturquoise")
+
+# Function to generate list of bubble plots from list of data frames
+get_bubble_plots <- function(df_list, x_axis_text_size) {
+  result <- list()
+  list_names <- names(df_list)
+  for (i in list_names) {
+    current_df <- df_list[[i]]
+    current_df$source <- factor(current_df$source, levels = rev(c("B2", "B3", "B4", "B5", "R1P1", "R1P5", "R1P9", "R1P14", "R1P18", "R3P3", "R3P5", "R3P11","R3P15", "R3P20", "R3P9_neg", "R3P10_neg", "R3P12_neg", "R3P14_neg", "R3P18_neg")))
+    current_plot <- ggplot(current_df, aes(x = V2, y = source)) +
+      geom_point(aes(size = V1_percentage, fill = source), alpha = 1, shape = 21) +
+      scale_size_continuous(limits = c(0, 100), range = c(1, 50), breaks = c(1, 10)) +
+      labs(x = "Taxa", y = "Sample", size = "Relative Abundance (%)", fill = "Source") +
+      theme(legend.key=element_blank(), 
+        title = element_text(color = "black", size = 50),
+        axis.text.x = element_text(colour = "black", size = x_axis_text_size, angle = 90, vjust = 0.3, hjust = 1, face = "bold"),
+        axis.title.x = element_text(size = 40, face = "bold"),
+        axis.title.y = element_text(size = 40, face = "bold"),
+        axis.text.y = element_text(colour = "black", size = 35), 
+        legend.text = element_text(size = 35, face ="bold", colour ="black"), 
+        legend.title = element_text(size = 40, face = "bold"),
+        panel.background = element_blank(), 
+        panel.border = element_rect(colour = "black", fill = NA, size = 1.2), 
+        legend.position = "bottom",
+        panel.grid.major.y = element_line(colour = "grey95")) +
+      scale_fill_manual(values=colours_bubble, guide = "none") +
+      scale_y_discrete(labels = c("B2" = "Bulk soil 1", "B3" = "Bulk soil 2", "B4" = "Bulk soil 3", "B5" = "Bulk soil 4", "R1P1"= "Native 1", "R1P5" = "Native 2", "R1P9" = "Native 3","R1P14"= "Native 4","R1P18"= "Native 5", "R3P3"="Susceptible 1", "R3P5"="Susceptible 2", "R3P11"="Susceptible 3","R3P15" = "Susceptible 4", "R3P20" = "Susceptible 5", "R3P9_neg" = "Resistant 1", "R3P10_neg" = "Resistant 2", "R3P12_neg" = "Resistant 3", "R3P14_neg" = "Resistant 4", "R3P18_neg" = "Resistant 5"))
+    result[[i]] <- current_plot
+  }
+  return(result)
+}
+
+# Execute function to create list of bubble plots
+bubble_plots_mmseqs <- get_bubble_plots(dfs_filtered_by_threshold_mmseqs, 35)
+bubble_plots_bracken <- get_bubble_plots(dfs_filtered_by_threshold_bracken, 35)
+
+# Set colour palette for stacked bar plots
+colours_stacked <- distinctColorPalette(150)
+
+# Function to generate list of stacked bar plots from list of data frames
+get_stacked_bar_plots <- function(df_list, legend_text_size) {
+  result <- list() 
+  list_names <- names(df_list)
+  for (i in list_names) {
+    current_df <- df_list[[i]]
+    current_df$source <- factor(current_df$source, levels = rev(c("B2", "B3", "B4", "B5", "R1P1", "R1P5", "R1P9", "R1P14", "R1P18", "R3P3", "R3P5", "R3P11","R3P15", "R3P20", "R3P9_neg", "R3P10_neg", "R3P12_neg", "R3P14_neg", "R3P18_neg")))
+    current_plot <- ggplot(current_df, aes(x = (V1_percentage / 100), y = source, fill = V2)) +
+      geom_bar(stat = "identity", position = "fill") + 
+      labs(title = i, x = "Relative Abundance", y = "Sample", fill = "Taxa") + 
+      theme(title = element_text(color = "black", size = 50),
+        axis.text.x = element_text(colour = "black", size = 25, angle = 90, vjust = 0.3, hjust = 1), 
+        axis.title.x = element_text(margin = margin(t = -180)),
+        axis.text.y = element_text(colour = "black", size = 25), 
+        legend.text = element_text(size = legend_text_size, face ="bold", colour ="black"), 
+        legend.title = element_text(size = 50, face = "bold"),
+        panel.background = element_blank()) +
+      scale_fill_manual(values = colours_stacked) +
+      scale_y_discrete(labels = c("B2" = "Bulk soil 1", "B3" = "Bulk soil 2", "B4" = "Bulk soil 3", "B5" = "Bulk soil 4", "R1P1"= "Native 1", "R1P5" = "Native 2", "R1P9" = "Native 3","R1P14"= "Native 4","R1P18"= "Native 5", "R3P3"="Susceptible 1", "R3P5"="Susceptible 2", "R3P11"="Susceptible 3","R3P15" = "Susceptible 4", "R3P20" = "Susceptible 5", "R3P9_neg" = "Resistant 1", "R3P10_neg" = "Resistant 2", "R3P12_neg" = "Resistant 3", "R3P14_neg" = "Resistant 4", "R3P18_neg" = "Resistant 5"))
+    result[[i]] <- current_plot
+  }
+  return(result)
+}
+
+# Execute function to create stacked bar plots
+stacked_bar_plots_mmseqs <- get_stacked_bar_plots(dfs_filtered_by_threshold_mmseqs, 25)
+stacked_bar_plots_bracken <- get_stacked_bar_plots(dfs_filtered_by_threshold_bracken, 10)
+
+# Function that will create list of combined bubble and stacked bar plots using patchwork
+plot_bubble_stacked_patchwork <- function(plot_list_bubble, plot_list_stacked) {
+  result <- list()
+  list_names <- names(plot_list_bubble)
+  for (i in list_names) {
+    current_bubble <- plot_list_bubble[[i]]
+    current_stacked <- plot_list_stacked[[i]]
+    current_plot <- (current_bubble + theme(plot.margin = unit(c(0,90,0,0), "pt"))) +
+    (current_stacked + theme(plot.margin = unit(c(0,0,0,90), "pt")))
+    result[[i]] <- current_plot
+  }
+  return(result)
+}
+
+# Execute patchwork function
+mmseqs_patchwork_bubble_stacked <- plot_bubble_stacked_patchwork(bubble_plots_mmseqs, stacked_bar_plots_mmseqs)
+mmseqs_patchwork_bubble_stacked
+
+bracken_patchwork_bubble_stacked <- plot_bubble_stacked_patchwork(bubble_plots_bracken, stacked_bar_plots_bracken)
+bracken_patchwork_bubble_stacked
+
+# Execute to save phylum and gene level bubble plots as .pdf and .svg
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/2a.pdf", plot = bubble_plots_mmseqs[[2]], width = 35, height = 35, units = "in")
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/2a.svg", plot = bubble_plots_mmseqs[[2]], width = 35, height = 35, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/2b.pdf", plot = bubble_plots_mmseqs[[3]], width = 35, height = 35, units = "in")
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/2b.svg", plot = bubble_plots_mmseqs[[3]], width = 35, height = 35, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/2c.pdf", plot = bubble_plots_mmseqs[[4]], width = 35, height = 35, units = "in")
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/2c.svg", plot = bubble_plots_mmseqs[[4]], width = 35, height = 35, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/3a.pdf", plot = bubble_plots_mmseqs[[10]], width = 35, height = 35, units = "in")
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/3a.svg", plot = bubble_plots_mmseqs[[10]], width = 35, height = 35, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/3b.pdf", plot = bubble_plots_mmseqs[[11]], width = 35, height = 35, units = "in")
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/3b.svg", plot = bubble_plots_mmseqs[[11]], width = 35, height = 35, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/3c.pdf", plot = bubble_plots_mmseqs[[12]], width = 45, height = 35, units = "in")
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/3c.svg", plot = bubble_plots_mmseqs[[12]], width = 45, height = 35, units = "in")
+
+## Bracken/mmseqs/total plots
+#ggsave("/Users/johnrobinson/Desktop/2_p_bracken.pdf", plot = bubble_plots_mmseqs[[1]], width = 35, height = 35, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/3_g_bracken.pdf", plot = bubble_plots_mmseqs[[2]], width = 35, height = 35, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/4_s_bracken.pdf", plot = bubble_plots_mmseqs[[3]], width = 35, height = 35, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/2_p_mmseqs.pdf", plot = bubble_plots_mmseqs[[1]], width = 35, height = 35, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/3_c_mmseqs.pdf", plot = bubble_plots_mmseqs[[5]], width = 35, height = 35, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/4_g_mmseqs.pdf", plot = bubble_plots_mmseqs[[9]], width = 45, height = 35, units = "in")
+```
+
+```{r}
+#| label: fig-C
+#| fig-cap: ANCOMBC2 Plots
+#| fig-width: 60
+#| fig-height: 40
+#| fig-align: center
+#| out-width: 100%
+#| echo: false
+#| warning: false
+
+# Load relevant packages
+library(ANCOMBC)
+library(microbiome)
+
+# Generate function that converts initial list of data frames into data frames with count data (not relative abundance)
+transform_initial_df_list_for_ancom <- function(df_list, source_col, taxa_col, num_col) {
+  result <- list()
+  list_names <- names(df_list)
+  for (i in list_names) {
+    current_df <- df_list[[i]]
+    result[[i]] <- current_df |>
+      group_by({{source_col}}, {{taxa_col}}) |>
+      mutate({{num_col}} := sum({{num_col}})) |>
+      ungroup() |>
+      distinct() |>
+      pivot_wider(names_from = {{source_col}}, values_from = {{num_col}}) |>
+      mutate(across(where(is.numeric), ~replace_na(., 0)))
+  }
+  return(result)
+}
+
+# Assign data frame list of interest (bracken OR mmseqs) and execute function (transform data frames)
+# bracken_num_df_list_ancom or mmseqs_df_list
+initial_bracken_OR_mmseqs_count_dfs <- mmseqs_df_list
+df_list_ancom <- transform_initial_df_list_for_ancom(initial_bracken_OR_mmseqs_count_dfs, source_file, V2, V1)
+
+# Execute function (convert data frames in list to phyloseq objects)
+physeq_list_ancom <- process_df_to_phyloseq(df_list_ancom)
+
+# Function that runs ancombc2 on list of phyloseq objects
+run_ancom_on_df_list <- function(physeq_list) {
+  result <- list()
+  list_names <- names(physeq_list)
+  for (i in list_names) {
+    current_physeq_obj <- physeq_list[[i]]
+    current_ancombc2_out <- ancombc2(
+      data = current_physeq_obj,
+      assay_name = "counts",
+      fix_formula = "Condition",
+      rand_formula = NULL,
+      group = "Condition",
+      p_adj_method = "holm",
+      pseudo_sens = TRUE,
+      prv_cut = 0.10,
+      lib_cut = 0,
+      s0_perc = 0.05,
+      struc_zero = TRUE,
+      neg_lb = TRUE,
+      alpha = 0.05,
+      n_cl = 2,
+      verbose = TRUE,
+      global = TRUE,
+      pairwise = TRUE,
+      dunnet = TRUE)
+  result[[i]] <- current_ancombc2_out
+  }
+  return(result)
+}
+
+# Generate reduced phyloseq object list if necessary recommended for mmseqs (e.g. physeq_list_to_analyze <- physeq_list_ancom[c(1, 5, 9, 13)]) to extract phylum, class, genus, species phyloseq objects
+physeq_list_to_analyze <- physeq_list_ancom[c(1, 5, 9)]
+
+# Execute ancombc2 function (generates ancombc2 output for phyloseq objects in list)
+ancombc2_result_list <- run_ancom_on_df_list(physeq_list_to_analyze)
+```
+
+```{r}
+#| label: fig-D
+#| fig-cap: ANCOMBC2 Plots 
+#| fig-width: 60
+#| fig-height: 40
+#| fig-align: center
+#| out-width: 100%
+#| echo: false
+#| warning: false
+
+# Generate function that will create a list of lists (for different taxonomic levels) containing reduced data frames from initial ancombc2 output organized by taxonomic level
+extract_relevant_df_and_reduce <- function(list_list) {
+  result <- list()
+  list_names <- names(list_list)
+  list_of_features <- c("ConditionNative", "ConditionResistant", "ConditionSusceptible", "ConditionResistant_ConditionNative", "ConditionSusceptible_ConditionNative", "ConditionSusceptible_ConditionResistant")
+  for (i in list_names) {
+    result_sub_list <- list()
+    current_ancom_list <- list_list[[i]]
+    current_ancom_df <- current_ancom_list[["res_pair"]]
+    for (j in list_of_features) {
+      pattern <- paste0("^taxon$|^(lfc_|se_|W_|p_|q_|diff_)", j, "$")
+      current_df_reduced <- current_ancom_df |> 
+        select(matches(pattern))
+      result_sub_list[[j]] <- current_df_reduced
+    }
+    result[[i]] <- result_sub_list
+  }
+  return(result)
+}
+
+# Get list of lists containing reduced data frames (different group comparisons) from initial ancombc2 output at different taxonomic levels
+reduced_ancom_list <- extract_relevant_df_and_reduce(ancombc2_result_list)
+
+# Function that will create a column labelling status of taxa (enriched, not significant, depleted) for specified sample collections based on q_value and lcf
+define_enrichment_depletion_status <- function(list_list) {
+  result <- list()
+  list_names <- names(list_list) 
+  list_of_features <- c("ConditionNative", "ConditionResistant", "ConditionSusceptible", "ConditionResistant_ConditionNative", "ConditionSusceptible_ConditionNative", "ConditionSusceptible_ConditionResistant")
+  for (i in list_names) {
+    current_ancom_list <- list_list[[i]]
+    result_sub_list <- list()
+    for (j in list_of_features) {
+      current_df <- current_ancom_list[[j]]
+      q_pattern <- paste0("q_", j)
+      lfc_pattern <- paste0("lfc_", j)
+      enriched_pattern <- paste0("Enriched ", j)
+      depleted_pattern <- paste0("Depleted ", j)
+      current_df$association = ifelse(current_df[[q_pattern]] < 0.05 & current_df[[lfc_pattern]]> 0, enriched_pattern, "Not significant")
+      current_df$association = ifelse(current_df[[q_pattern]] < 0.05 & current_df[[lfc_pattern]] < 0, depleted_pattern, current_df$association)
+      result_sub_list[[j]] <- current_df
+    }
+    result[[i]] <- result_sub_list
+  }
+  return(result)
+}
+
+# Append a column labelling status of taxa (enriched, not significant, depleted) for specified sample collections based on q_value and lcf in list of lists
+enriched_depleted_ancom_list <- define_enrichment_depletion_status(reduced_ancom_list)
+
+# Execute previous function to filter (based on threshold in percentage) previous data frame list containing relative abundance information for taxa (assigned with bracken OR mmseqs2). Use bracken_ra_df_list_ancom OR refined_mmseqs_df_list for bracken and mmseqs2 respectively.
+ra_list_dfs <- refined_mmseqs_df_list
+filtered_for_ancom_percentage <- filter_by_threshold(ra_list_dfs, 1.0)
+
+# If needed can filter relevant data frames from list of data frames with taxa that meet threshold (e.g. threshold_filtered_for_ancom <- filtered_for_ancom[c(1, 5, 9)] will filter phylum, class, genus from list of mmseqs2 data frames)
+threshold_filtered_for_ancom <- filtered_for_ancom_percentage[c(1, 5, 9)]
+
+# Function to filter out taxa that meet threshold from bracken/mmseqs output (at least one value across samples meets or exceeds threshold for row to be retained) for each data frame from list.
+get_list_of_taxa_that_passed_threshold <- function(df_list) {
+  result <- list()
+  list_names <- names(df_list)
+  for (i in list_names) {
+    current_df <- df_list[[i]]
+    result[[i]] <- current_df[[1]] |>
+      unique()
+  }
+  return(result)
+}
+
+# Execute function to get list of taxa that passed threshold
+list_of_taxa_that_passed_threshold <- get_list_of_taxa_that_passed_threshold(threshold_filtered_for_ancom)
+
+# Function that will filter ancombc2 results based on taxa that meet relative abundance threshold so that only taxa that meet relative abundance criteria retained.
+get_ancom_values_that_meet_threshold <- function(list_list, list_of_taxa_that_passed_threshold) {
+  result <- list()
+  list_names <- names(list_list)
+  for (i in 1:length(list_names)) {
+    current_ancom_list <- list_list[[i]]
+    current_threshold_list <- list_of_taxa_that_passed_threshold[[i]]
+    list_names_current_ancom <- names(current_ancom_list)
+    result_sub_list <- list()
+    for (j in list_names_current_ancom) {
+      result_sub_list[[j]] <- current_ancom_list[[j]] |>
+        filter(taxon %in% current_threshold_list)
+    }
+    result[[i]] <- result_sub_list
+  }
+  names(result) <- list_names
+  return(result)
+}
+
+# Execute function to filter ancombc2 results that meet threshold requirement (best for plotting volcano)
+threshold_filtered_ancom_list <- get_ancom_values_that_meet_threshold(enriched_depleted_ancom_list, list_of_taxa_that_passed_threshold)
+
+# Function that will filter ancombc2 results based on q_value
+filter_ancom_by_q_value <- function(list_list) {
+  result <- list()
+  list_names <- names(list_list)
+  list_of_features <- c("ConditionNative", "ConditionResistant", "ConditionSusceptible", "ConditionResistant_ConditionNative", "ConditionSusceptible_ConditionNative", "ConditionSusceptible_ConditionResistant")
+  for (i in list_names) {
+    current_ancom_list <- list_list[[i]]
+    result_sub_list <- list()
+    for (j in list_of_features) {
+      current_df <- current_ancom_list[[j]]
+      q_pattern <- paste0("q_", j)
+      result_sub_list[[j]] <- current_df |> 
+        filter(current_df[[q_pattern]] < 0.05)
+    }
+    result[[i]] <- result_sub_list
+  }
+  return(result)
+}
+
+# Execute function to filter ancombc2 results based on q_value (best for plotting lollypop)
+ancom_list_filtered_q_value_and_threshold <- filter_ancom_by_q_value(threshold_filtered_ancom_list)
+
+# Function to plot taxa with volcano plot
+get_volcano <- function(list_list, x_axis_text_size, y_axis_text_size, x_axis_title_size, y_axis_title_size) {
+  result <- list()
+  list_names <- names(list_list) 
+  list_of_features <- c("ConditionNative", "ConditionResistant", "ConditionSusceptible", "ConditionResistant_ConditionNative", "ConditionSusceptible_ConditionNative", "ConditionSusceptible_ConditionResistant")
+  for (i in list_names) {
+    current_list_ancom <- list_list[[i]]
+    result_sub_list <- list()
+    for (j in list_of_features) {
+      current_df <- current_list_ancom[[j]]
+      lfc_pattern <- paste0("lfc_", j)
+      q_pattern <- paste0("q_", j)
+      enriched_pattern <- paste0("Enriched ", j)
+      depleted_pattern <- paste0("Depleted ", j)
+      result_sub_list[[j]] <- ggplot(current_df, aes(x = .data[[lfc_pattern]], y = -log10(.data[[q_pattern]]), colour = association)) +
+        geom_point(size = 10) + 
+        labs(x = "Log2 Fold Change", y = "-log10(p-value)") + 
+        geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+        theme_bw() +
+        scale_color_manual(values = setNames(c("palegreen", "red4", "black"), c(enriched_pattern, depleted_pattern, "Not significant")), name = "Enriched or depleted") +
+        theme(title = element_text(color = "black", size = 50),
+              axis.text.x = element_text(colour = "black", size = x_axis_text_size, angle = 90, vjust = 0.3, hjust = 1), 
+              axis.title.x = element_text(color = "black", size = x_axis_title_size),
+              axis.title.y = element_text(color = "black", size = y_axis_title_size),
+              axis.text.y = element_text(colour = "black", size = y_axis_text_size),
+              legend.text = element_text(size = 25, face ="bold", colour ="black"),
+              legend.title = element_text(size = 25, face = "bold")
+              )
+    }
+    result[[i]] <- result_sub_list
+  }
+  return(result)
+}
+
+# Execute function to generate list of volcano plots 
+volcano_plot_list <- get_volcano(threshold_filtered_ancom_list, 25, 25, 50, 50)
+
+# Function to plot taxa with lollypop plot
+get_lollypop <- function(list_list, x_axis_text_size, y_axis_text_size, x_axis_title_size, y_axis_title_size) {
+  result <- list()
+  list_names <- names(list_list) 
+  list_of_features <- c("ConditionNative", "ConditionResistant", "ConditionSusceptible", "ConditionResistant_ConditionNative", "ConditionSusceptible_ConditionNative", "ConditionSusceptible_ConditionResistant")
+  for (i in list_names) {
+    current_list_ancom <- list_list[[i]]
+    result_sub_list <- list()
+    for (j in list_of_features) {
+      current_df <- current_list_ancom[[j]]
+      lfc_pattern <- paste0("lfc_", j)
+      enriched_pattern <- paste0("Enriched ", j)
+      depleted_pattern <- paste0("Depleted ", j)
+      result_sub_list[[j]] <- ggplot(current_df, aes(x = .data[[lfc_pattern]], y = taxon, colour = association)) +
+        geom_point(size = 20) + 
+        theme_bw() +
+        geom_segment(aes(x=0, xend=.data[[lfc_pattern]], y=taxon, yend=taxon, color = association)) + 
+        scale_color_manual(values = setNames(c("palegreen", "red4"), c(enriched_pattern, depleted_pattern)), name = "Enriched or depleted") +
+        geom_vline(xintercept = 0, size=1.5) + 
+        xlab("log2FoldChange") + 
+        ylab(NULL) +
+        theme(title = element_text(color = "black", size = 50),
+              axis.text.x = element_text(colour = "black", size = x_axis_text_size, angle = 90, vjust = 0.3, hjust = 1),
+              axis.title.x = element_text(color = "black", size = x_axis_title_size),
+              axis.title.y = element_text(color = "black", size = y_axis_title_size),
+              axis.text.y = element_text(colour = "black", size = y_axis_text_size, face = "bold"),
+              legend.text = element_text(size = 25, face ="bold", colour ="black"),
+              legend.title = element_text(size = 25, face = "bold")
+              )
+    }
+    result[[i]] <- result_sub_list
+  }
+  return(result)
+}
+
+# Execute function to generate list of lollypop plots
+lollypop_plot_list <- get_lollypop(ancom_list_filtered_q_value_and_threshold, 50, 35, 50, 50)
+
+# Function to define sample condition (control, native, susc, res) and create a list of lists containing taxa relative abundance (percentage) data. Conditions retained in data frames based on conditions used in ancombc2 comparisons
+identify_grouping <- function(df_list) {
+  result <- list()
+  list_names <- names(df_list)
+  list_of_features <- c("ConditionNative", "ConditionResistant", "ConditionSusceptible", "ConditionResistant_ConditionNative", "ConditionSusceptible_ConditionNative", "ConditionSusceptible_ConditionResistant")
+  list_of_comparisons <- list(c("Bulk soil", "Native"), c("Bulk soil", "Resistant"), c("Bulk soil", "Susceptible"), c("Resistant", "Native"), c("Susceptible", "Native"), c("Susceptible", "Resistant"))
+  for (i in list_names) {
+    current_df_initial <- df_list[[i]]
+    current_df_with_condition <- current_df_initial |> 
+      mutate(Condition = case_when(
+      source %in% c("B2", "B3", "B4", "B5") ~ "Bulk soil",
+      source %in% c("R1P1", "R1P5", "R1P9", "R1P14", "R1P18") ~ "Native",
+      source %in% c("R3P3", "R3P5", "R3P11", "R3P15", "R3P20") ~ "Susceptible",
+      source %in% c("R3P9_neg", "R3P10_neg", "R3P12_neg", "R3P14_neg", "R3P18_neg") ~ "Resistant"))
+      result_sub_list <- list()
+      for (j in 1:length(list_of_features)) {
+        result_sub_list[[j]] <- current_df_with_condition |>
+          filter(Condition %in% list_of_comparisons[[j]])
+      }
+      names(result_sub_list) <- list_of_features
+      result[[i]] <- result_sub_list
+  }
+  return(result)
+}
+
+# Execute function to create column defining sample condition in data frames, filtering conditions in data frames based on conditions used in ancombc2 comparisons
+grouped_list_of_dfs <- identify_grouping(threshold_filtered_for_ancom)
+
+# Create function to filter taxa in relative abundance (percentage) data frames based on taxa that meet q_value and threshold requirements (here have already screened by threshold above)
+get_taxa_list_q_value_threshold <- function(list_list_relative_abundance, list_list_taxa_threshold_q_value) {
+  result <- list()
+  list_names <- names(list_list_relative_abundance)
+  for (i in list_names) {
+    current_list <- list_list_relative_abundance[[i]]
+    current_list_threshold_q <- list_list_taxa_threshold_q_value[[i]]
+    list_names_sub_list <- names(current_list)
+    result_sub_list <- list()
+    for (j in list_names_sub_list) {
+      current_df_ra <- current_list[[j]]
+      taxa_threshold_q_taxa_df <- current_list_threshold_q[[j]]
+      current_threshold_q_value_list <- taxa_threshold_q_taxa_df[[1]]
+      result_sub_list[[j]] <- current_df_ra |>
+        filter(V2 %in% current_threshold_q_value_list)
+    }
+    result[[i]] <- result_sub_list
+  }
+  return(result)
+}
+
+# Execute function to filter taxa in relative abundance (percentage) data frames based on taxa that meet q_value and threshold requirements
+taxa_list_q_value_threshold_ra <- get_taxa_list_q_value_threshold(grouped_list_of_dfs, ancom_list_filtered_q_value_and_threshold)
+
+# Function to plot taxa with box plots
+get_boxplot <- function(list_list, x_axis_text_size, y_axis_text_size, x_axis_title_size, y_axis_title_size) {
+  result <- list()
+  list_names <- names(list_list) 
+  for (i in list_names) {
+    current_list <- list_list[[i]]
+    list_names_sub_list <- names(current_list)
+    result_sub_list <- list()
+    for (j in list_names_sub_list) {
+      current_df <- current_list[[j]]
+      result_sub_list[[j]] <- ggplot(current_df, aes(V1_percentage, V2, fill = Condition)) +
+  geom_boxplot(outlier.size = 0.5) + theme_bw() + xlab("Relative abundance") +
+  theme(axis.text.y = element_text(size = 7) ) + ylab(NULL) +
+  scale_fill_manual(values = c("Bulk soil" = "darkgrey", "Native" = "maroon", "Susceptible" = "plum", "Resistant" = "paleturquoise")) +
+  theme(title = element_text(color = "black", size = 50),
+        axis.text.x = element_text(colour = "black", size = x_axis_text_size, angle = 90, vjust = 0.3, hjust = 1), 
+        axis.title.x = element_text(color = "black", size = x_axis_title_size),
+        axis.title.y = element_text(color = "black", size = y_axis_title_size),
+        axis.text.y = element_text(colour = "black", size = y_axis_text_size, face = "bold"), 
+        legend.text = element_text(size = 25, face ="bold", colour ="black"), 
+        legend.title = element_text(size = 25, face = "bold"))
+    }
+    result[[i]] <- result_sub_list
+  }
+  return(result)
+}
+
+# Execute function to generate list of box plots
+boxplot_list <- get_boxplot(taxa_list_q_value_threshold_ra, 25, 35, 50, 50)
+
+# Function that will create list of combined volcano plots, lollypop plots, and box plots using patchwork
+plot_ancom_patchwork <- function(list_list_volcano, list_list_lollypop, list_list_boxplot) {
+  result <- list()
+  list_names <- names(list_list_volcano)
+  for (i in list_names) {
+    current_list_volcano <- list_list_volcano[[i]]
+    current_list_lollypop <- list_list_lollypop[[i]]
+    current_list_boxplot <- list_list_boxplot[[i]]
+    list_names_sub_list <- names(current_list_lollypop)
+    result_sub_list <- list()
+    for (j in list_names_sub_list) {
+      current_plot_volcano <- current_list_volcano[[j]]
+      current_plot_lollypop <- current_list_lollypop[[j]]
+      current_plot_boxplot <- current_list_boxplot[[j]]
+    result_sub_list[[j]] <- (current_plot_volcano + current_plot_lollypop + current_plot_boxplot)
+    }
+    result[[i]] <- result_sub_list
+  }
+  return(result)
+}
+
+# Execute patchwork function
+ancom_patchwork <- plot_ancom_patchwork(volcano_plot_list, lollypop_plot_list, boxplot_list)
+ancom_patchwork
+```
+
+```{r}
+#| label: fig-E
+#| fig-cap: DRAM PCoA
+#| fig-width: 7.5
+#| fig-height: 7.5
+#| fig-align: center
+#| out-width: 100%
+#| echo: false
+#| warning: false
+
+# Load relevant DRAM annotation file
+DRAM_annotations <- read_delim("/Users/johnrobinson/Desktop/rhizosphere_2025/DRAM_related_rough/annotations.tsv")
+
+# Calculate relative abundance of genes with kegg annotations (using total gene number for denominator, rather than total gene number after filtering step) 
+ra_gene_function_df <- DRAM_annotations |>
+  group_by(fasta) |>
+  mutate(num_genes_total = n()) |>
+  ungroup() |>
+  filter(!is.na(kegg_hit)) |>
+  group_by(fasta, kegg_hit) |>
+  mutate(num_gene_function = n()) |>
+  ungroup() |>
+  mutate(ra_gene_function = num_gene_function / num_genes_total) |>
+  ungroup() |>
+  select(fasta, kegg_hit, ra_gene_function) |>
+  distinct()
+
+# Change format (wider), replace NA, rename column
+ra_gene_function_df_wider <- ra_gene_function_df |>
+  pivot_wider(names_from = "fasta", values_from = "ra_gene_function") |>
+  mutate(across(where(is.numeric), ~replace_na(., 0))) |>
+  rename("V2" = "kegg_hit")
+
+# Rename kegg identifiers to avoid detection of duplicate ids
+gene_function <- ra_gene_function_df_wider$V2
+cleaned_genes_1 <- gsub("'", "", gene_function)
+cleaned_genes_2 <- gsub("\"", "", cleaned_genes_1)
+cleaned_genes_unique <- make.unique(cleaned_genes_2)
+ra_gene_function_df_wider$V2 <- cleaned_genes_unique
+
+# Transform into list (to create phyloseq object)
+ra_gene_function_df_wider_list <- list(ra_gene_function_df_wider)
+names(ra_gene_function_df_wider_list) <- "ra_gene_function_df_wider"
+
+# Execute function to create phyloseq object
+dram_physeq_object_ra <- process_df_to_phyloseq(ra_gene_function_df_wider_list)
+
+# Execute beta diversity plot function
+beta_dram_ra <- get_beta(dram_physeq_object_ra, "PCoA", "bray", "no")
+beta_dram_ra
+
+# Execute function to get a list of p-values from PERMANOVA
+permanova_test_dram_ra <- get_PERMANOVA(dram_physeq_object_ra, "bray")
+
+# Execute function to get a list of p-values from pairwise.Adonis
+pairwise_Adonis_test_dram_ra <- get_pairwise_Adonis(dram_physeq_object_ra, "bray")
+pairwise_Adonis_test_dram_ra
+
+# Execute to save DRAM PCoA as .pdf and .svg
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/4.pdf", plot = beta_dram_ra, width = 6, height = 7, units = "in")
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/4.svg", plot = beta_dram_ra, width = 6, height = 7, units = "in")
+```
+
+```{r}
+#| label: fig-F
+#| fig-cap: Kruskal-wallis and Dunn's test results (DRAM)
+#| fig-width: 15
+#| fig-height: 7.5
+#| fig-align: center
+#| out-width: 100%
+#| echo: false
+#| warning: false
+
+library(dunn.test)
+
+# Create data frame in appropriate format for kruskal-wallis
+ra_gene_DRAM_for_kruskal <- ra_gene_function_df_wider |>
+      pivot_longer(cols = 2:20) |>
+      mutate(name = case_when(
+      name == "rhizo_Control_B2_1.0K.fasta_assembly" ~ "B2",
+      name == "rhizo_Control_B3_1.0K.fasta_assembly" ~ "B3",
+      name == "rhizo_Control_B4_1.0K.fasta_assembly" ~ "B4",
+      name == "rhizo_Control_B5_1.0K.fasta_assembly" ~ "B5",
+      name == "rhizo_R1P1_1.0K.fasta_assembly" ~ "R1P1",
+      name == "rhizo_R1P5_1.0K.fasta_assembly" ~ "R1P5",
+      name == "rhizo_R1P9_1.0K.fasta_assembly" ~ "R1P9",
+      name == "rhizo_R1P14_1.0K.fasta_assembly" ~ "R1P14",
+      name == "rhizo_R1P18_1.0K.fasta_assembly" ~ "R1P18",
+      name == "rhizo_R3P3_1.0K.fasta_assembly" ~ "R3P3",
+      name == "rhizo_R3P5_1.0K.fasta_assembly" ~ "R3P5",
+      name == "rhizo_R3P11_1.0K.fasta_assembly" ~ "R3P11",
+      name == "rhizo_R3P15_1.0K.fasta_assembly" ~ "R3P15",
+      name == "rhizo_R3P20_1.0K.fasta_assembly" ~ "R3P20",
+      name == "rhizo_R3P9_neg_1.0K.fasta_assembly" ~ "R3P9_neg",
+      name == "rhizo_R3P10_neg_1.0K.fasta_assembly" ~ "R3P10_neg",
+      name == "rhizo_R3P12_neg_1.0K.fasta_assembly" ~ "R3P12_neg",
+      name == "rhizo_R3P14_neg_1.0K.fasta_assembly" ~ "R3P14_neg",
+      name == "rhizo_R3P18_neg_1.0K.fasta_assembly" ~ "R3P18_neg",
+    )) |>
+      mutate(Condition = case_when(
+      name %in% c("B2", "B3", "B4", "B5") ~ "Bulk soil",
+      name %in% c("R1P1", "R1P5", "R1P9", "R1P14", "R1P18") ~ "Native",
+      name %in% c("R3P3", "R3P5", "R3P11", "R3P15", "R3P20") ~ "Susceptible",
+      name %in% c("R3P9_neg", "R3P10_neg", "R3P12_neg", "R3P14_neg", "R3P18_neg") ~ "Resistant"))
+
+# Generate function and run kruskal-wallis on all kegg hits
+get_kruskal_result_for_DRAM <- function(df) {
+  kegg_names <- unique(df$V2)
+  result <- list()
+  for (i in kegg_names) {
+    df_current <- df |>
+      filter(V2 == i)
+    current_kruskal <- kruskal.test(df_current$value ~ df_current$Condition)
+    current_p_value <- current_kruskal[["p.value"]]
+    result[[i]] <- current_p_value
+  }
+  return(result)
+}
+
+# Execute kruskal-wallis rank sum on data frame
+kruskal_result_for_DRAM <- get_kruskal_result_for_DRAM(ra_gene_DRAM_for_kruskal)
+
+# Generate data frame from list
+kruskal_result_for_DRAM_df <- tibble(
+  kegg_hit = names(kruskal_result_for_DRAM),
+  p_value = map_dbl(kruskal_result_for_DRAM, 1) 
+)
+
+# Filter data frame by p_value and get kegg hit that passed kruskal-wallis
+kruskal_result_for_DRAM_df_filtered  <- kruskal_result_for_DRAM_df  |>
+  filter(p_value < 0.05)
+
+kegg_passed_kruskal <- kruskal_result_for_DRAM_df_filtered$kegg_hit 
+
+# Extract from initial data frame those that passed kruskal-wallis
+significant_kegg_function <- ra_gene_DRAM_for_kruskal |>
+  filter(V2 %in% kegg_passed_kruskal)
+
+# Generate function and run dunn test on significant kegg hits from kruskal-wallis
+get_dunn_result_for_DRAM <- function(df) {
+  kegg_names <- unique(significant_kegg_function$V2)
+  result <- list()
+  for (i in kegg_names) {
+    df_current <- df |>
+    filter(V2 == i)
+    current_dunn <- dunn.test(x = df_current$value,
+                              g = df_current$Condition,
+                              method = "bonferroni")
+    current_dunn_df <- data.frame(
+      chi2 = current_dunn$chi2,
+      Z = current_dunn$Z,
+      P = current_dunn$P,
+      P.adjusted = current_dunn$P.adjusted,
+      comparisons = current_dunn$comparisons
+    ) 
+    result[[i]] <- current_dunn_df
+  }
+  return(result)
+}
+
+# Execute dunn on data frame
+dunn_result_for_DRAM <- get_dunn_result_for_DRAM(significant_kegg_function)
+
+# Get as data frame
+dunn_result_df <- bind_rows(dunn_result_for_DRAM, .id = "source")
+
+# Split data frame by comparison and filter by P.adjusted
+get_dram_dfs_as_list <- function(df) {
+  comparison_vector <- df$comparisons
+  result <- list()
+  for (i in comparison_vector) {
+    current_df <- df |>
+      filter(comparisons == i & P.adjusted < 0.05)
+    current_df$association = ifelse(current_df$Z > 0,
+                              "enriched", "depleted")
+    result[[i]] <- current_df
+  }
+  return(result)
+}
+
+# Execute function
+df_list_DRAM_p_filtered <- get_dram_dfs_as_list(dunn_result_df)
+
+# Generate plot function
+get_DRAM_lollypop <- function (df_list) {
+  list_names <- names(df_list)
+  result <- list()
+  for (i in list_names) {
+    current_df <- df_list[[i]]
+    current_plot <- ggplot(current_df, aes(x = Z, y = source, colour = association)) +
+        geom_point(size = 3) + 
+        theme_bw() +
+        geom_segment(aes(x=0, xend=Z, y=source, yend=source, color = association)) + 
+        scale_color_manual(values = setNames(c("palegreen", "red4"), c("enriched", "depleted")),
+                           name = paste0(unique(current_df$comparisons))) +
+        geom_vline(xintercept = 0, size=1.5) + 
+        xlab("Z_value") + 
+        ylab(NULL) +
+        theme(title = element_text(color = "black", size = 20),
+              axis.text.x = element_text(colour = "black", size = 10, angle = 90, vjust = 0.3, hjust = 1),
+              axis.title.x = element_text(color = "black", size = 10),
+              axis.text.y = element_text(colour = "black", size = 10, face = "bold"))
+    result[[i]] <- current_plot
+  }
+  return(result)
+}
+
+# List of plots (note differences in two-component system, type VI secretion system, toxoflavin biosynthesis protein, toxin).
+list_of_dram_plots_dunn_test <- get_DRAM_lollypop(df_list_DRAM_p_filtered)
+```
+
+```{r}
+#| label: fig-G
+#| fig-cap: DRAM Heatmaps
+#| fig-width: 60
+#| fig-height: 60
+#| fig-align: center
+#| out-width: 100%
+#| echo: false
+#| warning: false
+
+library(readxl)
+
+# Load relevant DRAM annotation file (assemblies)
+DRAM_assemblies_product <- read.delim("/Users/johnrobinson/Desktop/rhizosphere_2025/DRAM_related_rough/product_DRAM_assemblies.tsv", header = TRUE, stringsAsFactors = FALSE)
+
+# Separate into two data frames
+DRAM_assemblies_ETC_complexes <- DRAM_assemblies_product[,1:33]
+DRAM_assemblies_function_initial <- DRAM_assemblies_product[, c(1 ,34:99)]
+
+# Convert false and true to 0 and 1 (respectively)
+get_binary <- function(df) {
+  result <- df |> 
+    mutate(across(where(is.character),
+                  ~ ifelse(. == "True", 1,
+                           ifelse(. == "False", 0, .)))) |>
+    mutate(across(where(is.character) & !1,
+                ~ as.numeric(.)))
+  return(result)
+}
+
+# Execute function to convert True/False to binary
+DRAM_assemblies_function_binary <- get_binary(DRAM_assemblies_function_initial)
+
+# Function to rename first column and rearrange data frames in list of data frames
+get_df_organized_for_heatmap <- function (df) {
+  colnames(df)[1] <- "source"
+  result <- df |>
+    pivot_longer(
+      cols = 2:length(df),
+      names_to = "V2",
+      values_to = "V1"
+    ) 
+  return(result)
+}
+
+# Execute function to get data in proper format to plot heatmap 
+DRAM_df_assemblies_ETC_complexes_formatted <- get_df_organized_for_heatmap(DRAM_assemblies_ETC_complexes)
+
+DRAM_df_assemblies_function_formatted <- get_df_organized_for_heatmap(DRAM_assemblies_function_binary)
+
+# Function to reorder and rename entries in source column before plotting
+get_correct_order_for_heatmap <- function(df) {
+  result <- df |>
+    mutate(source = case_when(
+      source == "rhizo_Control_B2_1.0K.fasta_assembly" ~ "Bulk soil 1",
+      source == "rhizo_Control_B3_1.0K.fasta_assembly" ~ "Bulk soil 2",
+      source == "rhizo_Control_B4_1.0K.fasta_assembly" ~ "Bulk soil 3",
+      source == "rhizo_Control_B5_1.0K.fasta_assembly" ~ "Bulk soil 4",
+      source == "rhizo_R1P1_1.0K.fasta_assembly" ~ "Native 1",
+      source == "rhizo_R1P5_1.0K.fasta_assembly" ~ "Native 2",
+      source == "rhizo_R1P9_1.0K.fasta_assembly" ~ "Native 3",
+      source == "rhizo_R1P14_1.0K.fasta_assembly" ~ "Native 4",
+      source == "rhizo_R1P18_1.0K.fasta_assembly" ~ "Native 5",
+      source == "rhizo_R3P3_1.0K.fasta_assembly" ~ "Susceptible 1",
+      source == "rhizo_R3P5_1.0K.fasta_assembly" ~ "Susceptible 2",
+      source == "rhizo_R3P11_1.0K.fasta_assembly" ~ "Susceptible 3",
+      source == "rhizo_R3P15_1.0K.fasta_assembly" ~ "Susceptible 4",
+      source == "rhizo_R3P20_1.0K.fasta_assembly" ~ "Susceptible 5",
+      source == "rhizo_R3P9_neg_1.0K.fasta_assembly" ~ "Resistant 1",
+      source == "rhizo_R3P10_neg_1.0K.fasta_assembly" ~ "Resistant 2",
+      source == "rhizo_R3P12_neg_1.0K.fasta_assembly" ~ "Resistant 3",
+      source == "rhizo_R3P14_neg_1.0K.fasta_assembly" ~ "Resistant 4",
+      source == "rhizo_R3P18_neg_1.0K.fasta_assembly" ~ "Resistant 5",
+    )) |>
+    arrange(factor(source, levels = c("Bulk soil 1", "Bulk soil 2", "Bulk soil 3", "Bulk soil 4", "Native 1", "Native 2", "Native 3", "Native 4", "Native 5", "Susceptible 1", "Susceptible 2", "Susceptible 3", "Susceptible 4", "Susceptible 5", "Resistant 1", "Resistant 2", "Resistant 3", "Resistant 4", "Resistant 5"))
+    )
+  return(result)
+}
+
+# Execute function to get correct name and order of source column for heatmap
+DRAM_df_assemblies_ETC_complexes_ordered <- get_correct_order_for_heatmap(DRAM_df_assemblies_ETC_complexes_formatted)
+
+DRAM_df_assemblies_function_ordered <- get_correct_order_for_heatmap(DRAM_df_assemblies_function_formatted)
+
+# Heatmap plotting function 
+get_heatmaps <- function(df, num_col, legend, title, x_axis_label, y_axis_label, legend_title) {
+  result_initial <- ggplot(df, aes(x = V2, y = source, fill = .data[[num_col]])) +
+    geom_tile(color = "black", linewidth = 1.0) +
+    coord_fixed(ratio = 1)
+    if (legend == "present_absent") {
+      result_intermediate <- result_initial +
+        scale_fill_gradient2(low = "white", high = "red",
+                             labels = c("Absent", "Present"),
+                             breaks = c(0, 1))
+    } else if (legend == "count_relative") {
+      result_intermediate <- result_initial +
+        scale_fill_gradient2(low = "white", high = "red",
+                             midpoint = 0,
+                             limits = c(min(df[[num_col]], na.rm = TRUE),
+                                        max(df[[num_col]], na.rm = TRUE)))
+    }
+  result <- result_intermediate +
+    scale_y_discrete(limits = rev(unique(df$source))) +
+    theme(
+      title = element_text(size = 40),
+      axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 25),
+      axis.text.y = element_text(size = 25),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.title.x = element_text(margin = margin(t = 20)),
+      legend.key.size = unit(3, "cm"),
+      legend.text = element_text(size = 30),
+      legend.title = element_text(size = 40, margin = margin(b = 30)), 
+      plot.margin = margin(b = 20, l = 20, r = 20, t = 20, unit = "pt")
+    ) +
+    labs(#title = title,
+        x = x_axis_label,
+        y = y_axis_label,
+        fill = legend_title)
+  return(result)
+}
+
+# Execute function to get heatmaps for DRAM assemblies
+heatmap_DRAM_assemblies_ETC_complexes <- get_heatmaps(DRAM_df_assemblies_ETC_complexes_ordered, "V1", "count_relative", "DRAM Assemblies Electron Transport Chain", "Process", "Sample", "Completeness")
+
+heatmap_DRAM_assemblies_function <- get_heatmaps(DRAM_df_assemblies_function_ordered, "V1", "present_absent", "DRAM Assemblies Metabolism", "Process", "Sample", "")
+
+# Load relevant DRAM annotation file and MAG metadata file(MAGs)
+DRAM_MAG_product <- read.delim("/Users/johnrobinson/Desktop/rhizosphere_2025/DRAM_related_rough/product_DRAM_MAG.tsv", header = TRUE, stringsAsFactors = FALSE) 
+
+MAG_metadata <- read_excel("/Users/johnrobinson/Desktop/rhizosphere_2025/hazelnut_metagenomics_10_17_2024/metadata/Table_SX.xlsx")
+
+# Get MAG names from metadata
+MAG_names <- MAG_metadata$Bin_Id
+
+# Add column with taxonomic identifiers for MAGs (from GTDB-Tk)
+DRAM_MAG_product <- DRAM_MAG_product |> mutate(taxonomic_identity = MAG_names, .after = 1)
+
+# Separate into two data frames
+DRAM_MAG_ETC_complexes <- DRAM_MAG_product[, c(2:34)] 
+DRAM_MAG_function_initial <- DRAM_MAG_product[, c(2, 35:100)]
+
+# Convert True/False to binary
+DRAM_MAG_function_binary <- get_binary(DRAM_MAG_function_initial)
+
+# Rename first column and rearrange
+DRAM_df_MAG_ETC_complexes_heatmap_ordered <- get_df_organized_for_heatmap(DRAM_MAG_ETC_complexes)
+
+DRAM_df_MAG_function_heatmap_ordered <- get_df_organized_for_heatmap(DRAM_MAG_function_binary)
+
+# Execute function to get heatmap plots
+heatmaps_DRAM_MAGs_ETC_complexes <- get_heatmaps(DRAM_df_MAG_ETC_complexes_heatmap_ordered, "V1", "count_relative", "DRAM MAGs Electron Transport Chain", "Process", "MAG Identity", "Completeness")
+
+heatmaps_DRAM_MAGs_function <- get_heatmaps(DRAM_df_MAG_function_heatmap_ordered, "V1", "present_absent", "DRAM MAGs Metabolism", "Process", "MAG Identity", "")
+
+# Plot with patchwork
+heatmap_DRAM_assemblies_ETC_complexes + heatmap_DRAM_assemblies_function
+heatmaps_DRAM_MAGs_ETC_complexes + heatmaps_DRAM_MAGs_function
+
+# Execute to save as .pdf and .svg
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/S2.pdf", plot = heatmap_DRAM_assemblies_function, width = 35, height = 35, units = "in")
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/S2.svg", plot = heatmap_DRAM_assemblies_function, width = 35, height = 35, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/S3.pdf", plot = heatmaps_DRAM_MAGs_function, width = 35, height = 49, units = "in")
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/S3.svg", plot = heatmaps_DRAM_MAGs_function, width = 35, height = 49, units = "in")
+```
+
+```{r}
+#| label: fig-H
+#| fig-cap: antiSMASH Heatmaps
+#| fig-width: 60
+#| fig-height: 40
+#| fig-align: center
+#| out-width: 100%
+#| echo: false
+#| warning: false
+
+# Load relevant BiGSCAPE file (assemblies)
+antiSMASH_assemblies <- read.delim("/Users/johnrobinson/Desktop/rhizosphere_2025/bigscape_assemblies_output/network_files/2024-09-16_12-54-22_hybrids_glocal/Network_Annotations_Full.tsv", header = TRUE)
+
+# Generate counts
+antiSMASH_assemblies$count <- 1
+
+# Function to format data frame for heatmap (assemblies)
+get_assemblies_formatted_heatmap <- function(df, source_col, bgc_col, num_col) {
+  result <- df |>
+    rename("source" = {{source_col}}, "V2" = {{bgc_col}}, "V1" = {{num_col}}) |>
+    mutate(source = case_when(
+      str_detect(source, regex("rhizo_Control_B2", ignore_case = TRUE)) ~ "Bulk soil 1",
+      str_detect(source, regex("rhizo_Control_B3", ignore_case = TRUE)) ~ "Bulk soil 2",
+      str_detect(source, regex("rhizo_Control_B4", ignore_case = TRUE)) ~ "Bulk soil 3",
+      str_detect(source, regex("rhizo_Control_B5", ignore_case = TRUE)) ~ "Bulk soil 4",
+      str_detect(source, regex("R1P1_k", ignore_case = TRUE)) ~ "Native 1",
+      str_detect(source, regex("R1P5", ignore_case = TRUE)) ~ "Native 2",
+      str_detect(source, regex("R1P9", ignore_case = TRUE)) ~ "Native 3",
+      str_detect(source, regex("R1P14", ignore_case = TRUE)) ~ "Native 4",
+      str_detect(source, regex("R1P18", ignore_case = TRUE)) ~ "Native 5",
+      str_detect(source, regex("R3P3", ignore_case = TRUE)) ~ "Susceptible 1",
+      str_detect(source, regex("R3P5", ignore_case = TRUE)) ~ "Susceptible 2",
+      str_detect(source, regex("R3P11", ignore_case = TRUE)) ~ "Susceptible 3",
+      str_detect(source, regex("R3P15", ignore_case = TRUE)) ~ "Susceptible 4",
+      str_detect(source, regex("R3P20", ignore_case = TRUE)) ~ "Susceptible 5",
+      str_detect(source, regex("R3P9_neg", ignore_case = TRUE)) ~ "Resistant 1",
+      str_detect(source, regex("R3P10_neg", ignore_case = TRUE)) ~ "Resistant 2",
+      str_detect(source, regex("R3P12_neg", ignore_case = TRUE)) ~ "Resistant 3",
+      str_detect(source, regex("R3P14_neg", ignore_case = TRUE)) ~ "Resistant 4",
+      str_detect(source, regex("R3P18_neg", ignore_case = TRUE)) ~ "Resistant 5",
+    )) |>
+    select(source, V2, V1) |> 
+    group_by(source, V2) |>
+    summarize(V1 = sum(V1)) |> 
+    ungroup() |>
+    # can use following two lines if want to view relative abundance (percentage) rather than counts
+    #group_by(source) |>
+    #mutate(V1 = V1 / sum(V1) * 100 ) |>
+    arrange(factor(source, levels = c("Bulk soil 1", "Bulk soil 2", "Bulk soil 3", "Bulk soil 4", "Native 1", "Native 2", "Native 3", "Native 4", "Native 5", "Susceptible 1", "Susceptible 2", "Susceptible 3", "Susceptible 4", "Susceptible 5", "Resistant 1", "Resistant 2", "Resistant 3", "Resistant 4", "Resistant 5")))
+    return(result)
+}
+
+# Execute function to get formatted data frames for heatmap visualizations (assemblies)
+antiSMASH_annotation_assemblies_class <- get_assemblies_formatted_heatmap(antiSMASH_assemblies, BGC, BiG.SCAPE.class, count)
+
+antiSMASH_annotation_assemblies_product <- get_assemblies_formatted_heatmap(antiSMASH_assemblies, BGC, Product.Prediction, count)
+
+# Execute function to get heatmap plots
+heatmaps_antiSMASH_assemblies_class <- get_heatmaps(antiSMASH_annotation_assemblies_class, "V1", "count_relative", "BGC Class Assemblies", "Predicted BGC Class", "Sample", "Count")
+
+heatmaps_antiSMASH_assemblies_product <- get_heatmaps(antiSMASH_annotation_assemblies_product, "V1", "count_relative", "BGC Product Prediction Assemblies", "Predicted BGC Product", "Sample", "Count")
+
+# Load relevant BiGSCAPE file (MAGs)
+antiSMASH_MAGs <- read.delim("/Users/johnrobinson/Desktop/rhizosphere_2025/BiG-SCAPE/output_2/network_files/2024-07-25_10-57-37_hybrids_glocal/Network_Annotations_Full.tsv", header = TRUE)
+
+# Generate counts
+antiSMASH_MAGs$count <- 1
+
+# Split string to enable effective grouping of MAGs
+antiSMASH_MAGs$MAG <- sapply(strsplit(antiSMASH_MAGs$Accession.ID, "_contig_"), "[", 1)
+
+# Rows to add
+rows_to_add <- data.frame(
+  MAG = c("rhizo_MAG_0017", "rhizo_MAG_0026", "rhizo_MAG_0041", "rhizo_MAG_0044")
+)
+
+# Function to format data frame for heatmap (MAGs)
+get_MAG_formatted_heatmap <- function(df, source_col, bgc_col, num_col) {
+    current_df_intermediate <- df |>
+      select({{source_col}}, {{bgc_col}}, {{num_col}}) |> 
+      group_by({{source_col}}, {{bgc_col}}) |>
+      summarize(count = sum({{num_col}})) |>
+      ungroup() |>
+      pivot_wider(names_from = {{bgc_col}}, values_from = count) |>
+      bind_rows(rows_to_add) |>
+      arrange({{source_col}}) |>
+      mutate(source = MAG_names)
+    result <- current_df_intermediate |>
+      mutate(across(2:(length(current_df_intermediate) -1), as.numeric)) |>
+      select(2:length(current_df_intermediate)) |>
+      mutate(across(where(is.numeric), ~replace_na(., 0))) |>
+      relocate(source)
+    return(result)
+}
+
+# Execute function to get formatted data frames for heatmap visualizations (MAGs)
+antiSMASH_annotation_MAGs_class <- get_MAG_formatted_heatmap(antiSMASH_MAGs, MAG, BiG.SCAPE.class, count)
+
+antiSMASH_annotation_MAGs_product <- get_MAG_formatted_heatmap(antiSMASH_MAGs, MAG, Product.Prediction, count)
+
+# Execute function to get data in proper format to plot heatmap 
+antiSMASH_annotation_MAGs_class_ordered <- get_df_organized_for_heatmap(antiSMASH_annotation_MAGs_class)
+
+antiSMASH_annotation_MAGs_product_ordered <- get_df_organized_for_heatmap(antiSMASH_annotation_MAGs_product)
+
+# Execute function to get heatmap plots
+heatmaps_antiSMASH_MAGs_class <- get_heatmaps(antiSMASH_annotation_MAGs_class_ordered, "V1", "count_relative", "BGC Class MAGs", "Predicted BGC Class", "MAG Identity", "Count")
+
+heatmaps_antiSMASH_MAGs_product <- get_heatmaps(antiSMASH_annotation_MAGs_product_ordered, "V1", "count_relative", "BGC Product Prediction Assemblies", "Predicted BGC Product", "MAG Identity", "Count")
+
+# Plot with patchwork
+heatmaps_antiSMASH_assemblies_class + heatmaps_antiSMASH_assemblies_product
+heatmaps_antiSMASH_MAGs_class + heatmaps_antiSMASH_MAGs_product
+
+# Execute to save as .pdf and .svg
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/5a.pdf", plot = heatmaps_antiSMASH_assemblies_class, width = 35, height = 35, units = "in")
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/5a.svg", plot = heatmaps_antiSMASH_assemblies_class, width = 35, height = 35, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/5b.pdf", plot = heatmaps_antiSMASH_assemblies_product, width = 35, height = 35, units = "in")
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/5b.svg", plot = heatmaps_antiSMASH_assemblies_product, width = 35, height = 35, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/S4.pdf", plot = heatmaps_antiSMASH_MAGs_product, width = 35, height = 35, units = "in")
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/S4.svg", plot = heatmaps_antiSMASH_MAGs_product, width = 35, height = 35, units = "in")
+```
+
+```{r}
+#| label: fig-I
+#| fig-cap: PCoA (antiSMASH/BiGSCAPE)
+#| fig-width: 7.5
+#| fig-height: 7.5
+#| fig-align: center
+#| out-width: 100%
+#| echo: false
+#| warning: false
+
+# Get values as relative abundance
+antiSMASH_ancom_class_ra <- antiSMASH_annotation_assemblies_class |> 
+  group_by(source) |>
+  mutate(relative_abundance = V1 / sum(V1)) |>
+  select(source, V2, relative_abundance) |>
+  rename("V1" = "relative_abundance") |>
+  pivot_wider(names_from = "source", values_from = "V1") |>
+  mutate(across(where(is.numeric), ~replace_na(., 0)))
+  
+antiSMASH_ancom_product_ra <- antiSMASH_annotation_assemblies_product |>
+  group_by(source) |>
+  mutate(relative_abundance = V1 / sum(V1)) |>
+  select(source, V2, relative_abundance) |>
+  rename("V1" = "relative_abundance") |>
+  pivot_wider(names_from = "source", values_from = "V1") |>
+  mutate(across(where(is.numeric), ~replace_na(., 0)))
+  
+# Convert initial df to list and name accordingly
+antiSMASH_list_pcoa <- list(antiSMASH_ancom_class_ra, antiSMASH_ancom_product_ra)
+names(antiSMASH_list_pcoa) <- c("bigscape_class", "bigscape_product")
+
+# Execute function to process list of dfs to phyloseq
+physeq_antiSMASH_pcoa <- process_df_to_phyloseq(antiSMASH_list_pcoa)
+
+# Execute beta diversity plot function
+beta_antiSMASH_ra <- get_beta(physeq_antiSMASH_pcoa, "PCoA", "bray", "no")
+beta_antiSMASH_ra
+
+# Execute function to get a list of p-values from PERMANOVA
+permanova_test_antiSMASH_ra <- get_PERMANOVA(physeq_antiSMASH_pcoa, "bray")
+
+# Execute function to get a list of p-values from pairwise.Adonis
+pairwise_Adonis_test_antiSMASH_ra <- get_pairwise_Adonis(physeq_antiSMASH_pcoa, "bray")
+```
+
+```{r}
+#| label: fig-J
+#| fig-cap: Alpha, Beta Diversity (for reduced subset)
+#| fig-width: 15
+#| fig-height: 15
+#| fig-align: center
+#| out-width: 100%
+#| echo: false
+#| warning: false
+
+## Upload and process relevant mmseqs2 subset data. Create phyloseq objects for mmseqs2 output (genus, species level). Visualize alpha and beta diversity and perform statistical analysis.
+
+# Get relevant file paths from directory (mmseqs2 subset)
+file_paths_subset_total <- list.files("/Users/johnrobinson/Desktop/rhizosphere_2025/subset_mmseqs2_output_2024_10_05/krona_input/", pattern = "(genus|species)[.]txt$", recursive = TRUE, full.names = TRUE)
+
+# Combine all entries from relevant mmseqs2 subset files into single data frame
+rhizosphere_full_subset_df <- file_paths_subset_total |>
+  set_names()|> 
+  map(~read.delim(., header = FALSE)) |> 
+  list_rbind(names_to = "source_file") |>
+  mutate(source_file = basename(source_file))
+
+# Create data frame list (mmseqs2 subset)
+taxonomy_categories <- c("genus.txt", "species.txt")
+mmseqs_subset_df_list <- get_dfs_as_list(taxonomy_categories, rhizosphere_full_subset_df, source_file)
+
+# Transform data frames in list (mmseqs2 subset)
+refined_mmseqs_df_subset_list <- transform_df_list(mmseqs_subset_df_list, source_file, V2, V1)
+
+# Get phyloseq objects from list of data frames 
+physeq_object_subset_list_mmseqs <- process_df_to_phyloseq(refined_mmseqs_df_subset_list)
+
+# Sample order (order samples for alpha diversity plots)
+desired_order <- c("B2", "B3", "B4", "B5", "R1P1", "R1P5", "R1P9", "R1P14", "R1P18", "R3P3", "R3P5", "R3P11", "R3P15", "R3P20", "R3P9_neg", "R3P10_neg", "R3P12_neg", "R3P14_neg", "R3P18_neg")
+
+# Execute function to get a list of alpha diversity plots for mmseqs2 subset data
+alpha_mmseqs_subset <- get_alpha(physeq_object_subset_list_mmseqs, "Shannon")
+
+# Execute function to get a list of alpha diversity plots for mmseqs2 subset data (boxplots)
+alpha_mmseqs_subset_boxplots_sh <- get_alpha_boxplot(physeq_object_subset_list_mmseqs, "Shannon")
+alpha_mmseqs_subset_boxplots_si <- get_alpha_boxplot(physeq_object_subset_list_mmseqs, "Simpson")
+
+# Execute function to get a list of alpha diversity plots for mmseqs2 subset data (bar)
+alpha_mmseqs_subset_bar_sh <- get_alpha_bar(physeq_object_subset_list_mmseqs, "Shannon")
+alpha_mmseqs_subset_bar_si <- get_alpha_bar(physeq_object_subset_list_mmseqs, "Simpson")
+
+# Execute function to get a list of beta diversity plots for mmseqs2 subset data
+beta_mmseqs_subset <- get_beta(physeq_object_subset_list_mmseqs, "PCoA", "bray")
+
+# Execute function to get a list of p-values from kruskal wallis for mmseqs2 subset data
+kruskal_test_mmseqs_subset <- get_kruskal_wallis(physeq_object_subset_list_mmseqs, "shannon")
+
+# Execute function to get a list of p-values from PERMANOVA for mmseqs2 subset data
+permanova_test_mmseqs_subset <- get_PERMANOVA(physeq_object_subset_list_mmseqs, "bray")
+
+# Execute function to get a list of p-values from pairwise.Adonis for mmseqs2 subset data
+pairwise_Adonis_test_mmseqs_subset <- get_pairwise_Adonis(physeq_object_subset_list_mmseqs, "bray")
+
+# Plot with patchwork (alpha and beta diversity)
+mmseqs_subset_alpha_beta_plots <- plot_patchwork(alpha_mmseqs_subset_boxplots_sh, beta_mmseqs_subset)
+mmseqs_subset_alpha_beta_plots
+
+# Execute to get as .pdf and .svg
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/S1a.pdf", plot = alpha_mmseqs_subset_bar_sh[[2]], width = 6, height = 7, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/S1a.svg", plot = alpha_mmseqs_subset_bar_sh[[2]], width = 6, height = 7, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/S1b.pdf", plot = alpha_mmseqs_subset_bar_si[[2]], width = 6, height = 7, units = "in")
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/S1b.svg", plot = alpha_mmseqs_subset_bar_si[[2]], width = 6, height = 7, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/S1c.pdf", plot = beta_mmseqs_subset[[2]], width = 6, height = 7, units = "in")
+
+#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/S1c.svg", plot = beta_mmseqs_subset[[2]], width = 6, height = 7, units = "in")
+```
+
+```{r}
+#| label: fig-K
+#| fig-cap: Additional analysis
+#| fig-width: 15
+#| fig-height: 15
+#| fig-align: center
+#| out-width: 100%
+#| echo: false
+#| warning: false
+
+
+# First part, variance comparison between groups with Fligner-Killeen
+
+# Get phyloseq objects from initial list for species level analysis
+physeq_genus <- physeq_object_list_mmseqs[[9]]
+physeq_species <- physeq_object_list_mmseqs[[13]]
+
+# Generate shannon and simpson data frame
+shannon_alpha_check <- estimate_richness(physeq_species, measures = c("observed", "shannon"))
+simpson_alpha_check  <- estimate_richness(physeq_species, measures = c("observed", "simpson"))
+
+# Add column defining condition and bulk_or_rhizo
+shannon_alpha_check$Condition <- c(rep("Bulk soil", 4), rep("Native", 5), rep("Susceptible", 5), rep("Resistant", 5))
+simpson_alpha_check$Condition <- c(rep("Bulk soil", 4), rep("Native", 5), rep("Susceptible", 5), rep("Resistant", 5))
+shannon_alpha_check$Bulk_or_rhizo <- c(rep("Bulk soil", 4), rep("Rhizosphere", 15))
+simpson_alpha_check$Bulk_or_rhizo <- c(rep("Bulk soil", 4), rep("Rhizosphere", 15))
+shannon_alpha_check$US_or_EU <- c(rep("Bulk soil", 4), rep("American", 5), rep("European", 10))
+simpson_alpha_check$US_or_EU <- c(rep("Bulk soil", 4), rep("American", 5), rep("European", 10))
+
+# Create reduced data frame to compare alpha-diversity variance between species
+filtered_shannon <- shannon_alpha_check |> filter(US_or_EU != "Bulk soil")
+filtered_simpson <- simpson_alpha_check |> filter(US_or_EU != "Bulk soil")
+
+# Run fligner-killeen test                        
+result_fligner_shannon_condition <- fligner.test(Shannon ~ Condition, data = shannon_alpha_check)
+
+result_fligner_simpson_condition <- fligner.test(Simpson ~ Condition, data = simpson_alpha_check)
+
+result_fligner_shannon_control_rhizo <- fligner.test(Shannon ~ US_or_EU, data = filtered_shannon)
+
+result_fligner_simpson_control_rhizo <- fligner.test(Simpson ~ US_or_EU, data = filtered_simpson)
+
+# Second part, explores how grouping changes kruskal-wallis significance (statistically significant difference between groups for both alpha diversity measures when grouped by rhizosphere vs. control, instead of comparing all four initial conditions).
+
+# Check output grouping by condition
+result_kruskal_shannon_condition <- kruskal.test(Shannon ~ Condition, data = shannon_alpha_check)
+
+result_kruskal_simpson_condition <- kruskal.test(Simpson ~ Condition, data = simpson_alpha_check)
+
+# Check output grouping by rhizo or control
+result_kruskal_shannon_bulk_or_rhizo <- kruskal.test(Shannon ~ Bulk_or_rhizo, data = shannon_alpha_check)
+
+result_kruskal_simpson_bulk_or_rhizo <- kruskal.test(Simpson ~ Bulk_or_rhizo, data = simpson_alpha_check)
+```
