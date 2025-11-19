@@ -48,6 +48,6 @@ This repository contains scripts that were used for processing, assembling, and 
 - "dereplicate_2024_04_08.sh" - used for dereplication of MAGs.
 - "rename_MAGs.pl" - called by "dereplicate_2024_04_08.sh".
 
-### Additional scripts
+### Additional scripts:
 - "MAG_analysis.sh" - includes the code used to generate the bacterial MAG phylogeny with GTDB-Tk. 
 - "R_rhizosphere_analysis.qmd" - contains R code used for analyzing/visualizing relevant metagenomic data.
