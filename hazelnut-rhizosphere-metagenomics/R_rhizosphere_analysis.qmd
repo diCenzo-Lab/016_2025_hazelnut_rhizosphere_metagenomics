@@ -493,8 +493,8 @@ get_bubble_plots <- function(df_list, x_axis_text_size) {
     current_df$source <- factor(current_df$source, levels = rev(c("B2", "B3", "B4", "B5", "R1P1", "R1P5", "R1P9", "R1P14", "R1P18", "R3P3", "R3P5", "R3P11","R3P15", "R3P20", "R3P9_neg", "R3P10_neg", "R3P12_neg", "R3P14_neg", "R3P18_neg")))
     current_plot <- ggplot(current_df, aes(x = V2, y = source)) +
       geom_point(aes(size = V1_percentage, fill = source), alpha = 1, shape = 21) +
-      scale_size_continuous(limits = c(0, 100), range = c(1, 50), breaks = c(1, 10, 50)) +
-      #scale_size_continuous(limits = c(0, 100), range = c(5, 54), breaks = c(0.01, 1, 25)) +
+      #scale_size_continuous(limits = c(0, 100), range = c(1, 50), breaks = c(1, 10, 50)) +
+      scale_size_continuous(limits = c(0, 100), range = c(0.01, 100), breaks = c(0.01, 1, 25)) +
       labs(x = "Taxa", y = "Sample", size = "Relative Abundance (%)", fill = "Source") +
       theme(legend.key=element_blank(), 
         title = element_text(color = "black", size = 50),
@@ -521,6 +521,7 @@ bubble_plots_bracken <- get_bubble_plots(dfs_filtered_by_threshold_bracken, 35)
 bubble_plots_mmseqs_mean <- get_bubble_plots(dfs_filtered_by_threshold_mmseqs_means, 20)
 
 # Filter data frame (no threshold) for taxa of interest and generate bubble plot
+# Filter genus_bac.txt
 dfs_filtered_by_threshold_mmseqs_means_total <- filter_by_threshold_mean(refined_mmseqs_df_list, 0)
 df <- dfs_filtered_by_threshold_mmseqs_means_total$genus_bac.txt
 df_taxa_of_interest <- df |>
@@ -528,6 +529,41 @@ df_taxa_of_interest <- df |>
 list_taxa_of_interest <- list(significant_taxa = df_taxa_of_interest)
 bubble_plot_taxa_of_interest <- get_bubble_plots(list_taxa_of_interest, 40)
 bubble_plot_taxa_of_interest
+
+# Filter genus.txt
+dfs_filtered_by_threshold_mmseqs_means_total <- filter_by_threshold_mean(refined_mmseqs_df_list, 0)
+df_total <- dfs_filtered_by_threshold_mmseqs_means_total$genus.txt
+df_taxa_of_interest_total <- df_total |>
+  filter(V2 %in% c("Actinospica", "Actinomadura", "Trebonia", "Occallatibacter", "Candidatus Sulfotelmatobacter", "Rhizobacter", "Ilumatobacter", "Amycolatopsis", "Actinocrinis", "Edaphobacter", "Phycicoccus", "Anatilimnocola", "Microbacterium")) 
+list_taxa_of_interest_total <- list(significant_taxa = df_taxa_of_interest_total)
+bubble_plot_taxa_of_interest_total <- get_bubble_plots(list_taxa_of_interest_total, 40)
+bubble_plot_taxa_of_interest_total
+
+# Process data frame for taxa of interest for heatmap visualization
+#df_taxa_of_interest_total$source <- factor(df_taxa_of_interest_total$source, levels = rev(c("B2", "B3", "B4", "B5", "R1P1", "R1P5", "R1P9", "R1P14", "R1P18", "R3P3", "R3P5", "R3P11","R3P15", "R3P20", "R3P9_neg", "R3P10_neg", "R3P12_neg", "R3P14_neg", "R3P18_neg")))
+
+# Generate data frame for visualization of samples
+#df_taxa_interest_pheatmap <- df_taxa_of_interest_total |> 
+  #pivot_wider(names_from = source, values_from = V1_percentage) |>
+  #column_to_rownames(var = "V2") |> 
+  #rename(c("Bulk soil 1" = "B2", "Bulk soil 2" = "B3", "Bulk soil 3" = "B4", "Bulk soil 4" = "B5", "Native 1" = "R1P1", "Native 2" = "R1P5", "Native 3" = "R1P9", "Native 4" = "R1P14", "Native 5" = "R1P18", "Susceptible 1" = "R3P3", "Susceptible 2" = "R3P5", "Susceptible 3"= "R3P11", "Susceptible 4" = "R3P15", "Susceptible 5" = "R3P20", "Resistant 1" = "R3P9_neg", "Resistant 2" = "R3P10_neg", "Resistant 3" = "R3P12_neg", "Resistant 4" = "R3P14_neg", "Resistant 5" = "R3P18_neg")) |>
+  #select("Bulk soil 1", "Bulk soil 2", "Bulk soil 3", "Bulk soil 4", "Native 1", "Native 2", "Native 3", "Native 4", "Native 5", "Susceptible 1", "Susceptible 2", "Susceptible 3", "Susceptible 4", "Susceptible 5", "Resistant 1", "Resistant 2", "Resistant 3", "Resistant 4", "Resistant 5")
+  
+# Generate data frame for visualization of groups
+#df_taxa_interest_pheatmap_by_group <- df_taxa_of_interest_total |> 
+  #pivot_wider(names_from = source, values_from = V1_percentage) |>
+  #column_to_rownames(var = "V2") |> mutate("Bulk soil" = rowMeans(across(1:4)), "Native" = rowMeans(across(5:9)), "Susceptible" = rowMeans(across(c("R3P3", "R3P5", "R3P11", "R3P15", "R3P20"))), "Resistant" = rowMeans(across(c("R3P9_neg", "R3P10_neg", "R3P12_neg", "R3P14_neg", "R3P18_neg")))) |>
+  #select("Bulk soil", "Native", "Susceptible", "Resistant")
+
+# Generate heatmap 
+#heatmap_genera_of_interest <- pheatmap(df_taxa_interest_pheatmap, 
+                                       #scale="row",
+                                       #cluster_cols=FALSE, 
+                                       #fontsize = 20,
+                                       #fontsize_col = 40,
+                                       #fontsize_row = 40,
+                                       #cellwidth = 130)
+
 
 # Set colour palette for stacked bar plots
 colours_stacked <- distinctColorPalette(450)
@@ -628,6 +664,14 @@ ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/significant_gene
 ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/significant_genera_rescaled.pdf", plot = bubble_plot_taxa_of_interest[[1]], width = 45, height = 35, units = "in")
 ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/significant_genera_rescaled.svg", plot = bubble_plot_taxa_of_interest[[1]], width = 45, height = 35, units = "in")
 
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/significant_genera_rescaled_final.pdf", plot = bubble_plot_taxa_of_interest[[1]], width = 45, height = 35, units = "in")
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/significant_genera_rescaled_final.svg", plot = bubble_plot_taxa_of_interest[[1]], width = 45, height = 35, units = "in")
+
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/significant_genera_pheatmap.pdf", plot = heatmap_genera_of_interest, width = 45, height = 35, units = "in")
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/significant_genera_pheatmap.svg", plot = heatmap_genera_of_interest, width = 45, height = 35, units = "in")
+
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/significant_genera_pheatmap_samples.pdf", plot = heatmap_genera_of_interest, width = 49, height = 35, units = "in")
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/significant_genera_pheatmap_samples.svg", plot = heatmap_genera_of_interest, width = 49, height = 35, units = "in")
 
 ## Bracken/mmseqs/total plots
 #ggsave("/Users/johnrobinson/Desktop/2_p_bracken.pdf", plot = bubble_plots_mmseqs[[1]], width = 35, height = 35, units = "in")
