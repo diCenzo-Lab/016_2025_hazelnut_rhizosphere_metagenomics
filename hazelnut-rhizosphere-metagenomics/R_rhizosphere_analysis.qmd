@@ -239,7 +239,7 @@ get_alpha_bar <- function(physeq_object_list, alpha_diversity_measure) {
     current_alpha_final <- current_alpha +
       stat_summary(fun = mean, geom = "bar", aes(fill = Condition), alpha = 0.5) +
       geom_jitter(width = 0.08) +
-      labs(x = "Condition",
+      labs(x = "",
            y = paste0(alpha_diversity_measure, " Diversity Index")) +
       scale_color_manual(values = colours) +
       scale_fill_manual(values = colours) +
@@ -273,20 +273,21 @@ get_beta <- function(physeq_object_list, plot_type, distance_matrix_type, taxono
     x_label_initial <- ordplot5$labels$x
     y_label_initial <- ordplot5$labels$y
     current_beta <- ordplot5 + theme_bw() + theme(aspect.ratio = 1) +
-      geom_point(size = 5) + 
+      geom_point(size = 2) + 
       labs(
         x = paste0("PC1", x_label_initial),
-        y = paste0("PC2", y_label_initial)
+        y = paste0("PC2", y_label_initial),
+        fill = "Sample Type"
       ) + 
       theme(panel.grid.minor = element_blank()) +
-      scale_color_manual(values = colours) +
+      scale_color_manual(name = "Sample Type", values = colours) +
       theme(title = element_text(color = "black", size = 15), text = element_text(size = 15), axis.ticks = element_line(color = "black"), axis.text = element_text(color = "black", size = 15))
     if(taxonomy_scale == "no") {
       current_beta <- current_beta +
-      scale_x_continuous(limits = c(-0.4, 0.4), 
-                         breaks = c(-0.4, -0.3, -0.2, -0.1, 0, 0.1, 0.2, 0.3, 0.4)) +
-      scale_y_continuous(limits = c(-0.4, 0.4), 
-                         breaks = c(-0.4, -0.3, -0.2, -0.1, 0, 0.1, 0.2, 0.3, 0.4))
+      scale_x_continuous(limits = c(-0.4, 0.2), 
+                         breaks = c(-0.4, -0.3, -0.2, -0.1, 0, 0.1, 0.2)) +
+      scale_y_continuous(limits = c(-0.3, 0.2), 
+                         breaks = c(-0.3, -0.2, -0.1, 0, 0.1, 0.2))
     } else {
       current_beta <- current_beta +
       scale_x_continuous(limits = c(-0.3, 0.3), 
@@ -353,7 +354,7 @@ alpha_bracken_bar_si <- get_alpha_bar(physeq_object_list_bracken, "Simpson")
 
 # Execute function to get a list of beta diversity plots
 beta_mmseqs <- get_beta(physeq_object_list_mmseqs, "PCoA", "bray")
-beta_bracken <- get_beta(physeq_object_list_bracken, "PCoA", "bray")
+beta_bracken <- get_beta(physeq_object_list_bracken, "PCoA", "bray", "no")
 
 # Execute function to get a list of p-values from kruskal wallis
 kruskal_test_mmseqs <- get_kruskal_wallis(physeq_object_list_mmseqs, "simpson")
@@ -367,7 +368,6 @@ permanova_test_bracken <- get_PERMANOVA(physeq_object_list_bracken, "bray")
 pairwise_Adonis_test_mmseqs <- get_pairwise_Adonis(physeq_object_list_mmseqs, "bray")
 pairwise_Adonis_test_bracken <- get_pairwise_Adonis(physeq_object_list_bracken, "bray")
 
-pairwise_Adonis_test_bracken
 # Function that will create list of combined alpha and beta diversity plots using patchwork
 plot_patchwork <- function(plot_list_alpha, plot_list_beta) {
   result <- list()
@@ -408,6 +408,12 @@ bracken_patchwork_alpha_beta
 #ggsave("/Users/johnrobinson/Desktop/1_bracken_b.pdf", plot = alpha_bracken_boxplot[[3]], width = 6, height = 7, units = "in")
 
 #ggsave("/Users/johnrobinson/Desktop/1_bracken_c.pdf", plot = beta_bracken[[3]], width = 6, height = 7, units = "in")
+
+ggsave("/Users/johnrobinson/Desktop/1_bracken_sh.pdf", plot = alpha_bracken_bar_sh[[3]], width = 6, height = 7, units = "in")
+
+ggsave("/Users/johnrobinson/Desktop/1_bracken_s9.pdf", plot = alpha_bracken_bar_si[[3]], width = 6, height = 7, units = "in")
+
+ggsave("/Users/johnrobinson/Desktop/1_bracken_beta.pdf", plot = beta_bracken[[3]], width = 6, height = 7, units = "in")
 ```
 
 ```{r}
@@ -445,9 +451,35 @@ filter_by_threshold <- function(df_list, threshold) {
   return(result)
 }
 
+# Alternate function to filter by threshold, but here use mean value across group and determine if greater than or less than some value
+filter_by_threshold_mean <- function(df_list, threshold) {
+  result <- list()
+  list_names <- names(df_list) 
+  for (i in list_names) {
+    current_df <- df_list[[i]]
+    col_name_pattern <- "(V2|B2|B3|B4|B5|R1P1(?![0-9])|R1P14|R1P18|R1P5|R1P9|R3P10_neg|R3P11|R3P12_neg|R3P14_neg|R3P15|R3P18_neg|R3P20|R3P9_neg|R3P5|R3P3)"
+    current_df_cleaned <- current_df |>
+      rename_with(~str_extract(., col_name_pattern))
+    current_df_intermediate <- current_df_cleaned |>
+      mutate(across(where(is.numeric), ~ . * 100)) 
+    current_df_final <- current_df_intermediate |>
+      mutate(mean = rowMeans(current_df_intermediate[, 2:20])) |>
+      filter(mean >= threshold) |>
+      select(-mean) |>
+      pivot_longer(
+        cols = 2:20,
+        names_to = "source",
+        values_to = "V1_percentage"
+      )
+    result[[i]] <- current_df_final
+  }
+  return(result)
+}
+
 # Execute function to filter by threshold (both bracken and mmseqs2)
 dfs_filtered_by_threshold_mmseqs <- filter_by_threshold(refined_mmseqs_df_list, 1.0) 
 dfs_filtered_by_threshold_bracken <- filter_by_threshold(bracken_list, 1.0)
+dfs_filtered_by_threshold_mmseqs_means <- filter_by_threshold_mean(refined_mmseqs_df_list, 1.0)
 
 # Colour scheme
 colours_bubble = c("B2"="black", "B3"="black", "B4"="black", "B5"="black", "R1P1"="maroon", "R1P5"="maroon", "R1P9"="maroon","R1P14"="maroon","R1P18"="maroon", "R3P3"="plum", "R3P5"="plum", "R3P11"="plum","R3P15"="plum", "R3P20"="plum", "R3P9_neg"="paleturquoise", "R3P10_neg"="paleturquoise", "R3P12_neg"="paleturquoise", "R3P14_neg"="paleturquoise", "R3P18_neg"="paleturquoise")
@@ -461,7 +493,8 @@ get_bubble_plots <- function(df_list, x_axis_text_size) {
     current_df$source <- factor(current_df$source, levels = rev(c("B2", "B3", "B4", "B5", "R1P1", "R1P5", "R1P9", "R1P14", "R1P18", "R3P3", "R3P5", "R3P11","R3P15", "R3P20", "R3P9_neg", "R3P10_neg", "R3P12_neg", "R3P14_neg", "R3P18_neg")))
     current_plot <- ggplot(current_df, aes(x = V2, y = source)) +
       geom_point(aes(size = V1_percentage, fill = source), alpha = 1, shape = 21) +
-      scale_size_continuous(limits = c(0, 100), range = c(1, 50), breaks = c(1, 10)) +
+      scale_size_continuous(limits = c(0, 100), range = c(1, 50), breaks = c(1, 10, 50)) +
+      #scale_size_continuous(limits = c(0, 100), range = c(5, 54), breaks = c(0.01, 1, 25)) +
       labs(x = "Taxa", y = "Sample", size = "Relative Abundance (%)", fill = "Source") +
       theme(legend.key=element_blank(), 
         title = element_text(color = "black", size = 50),
@@ -485,9 +518,19 @@ get_bubble_plots <- function(df_list, x_axis_text_size) {
 # Execute function to create list of bubble plots
 bubble_plots_mmseqs <- get_bubble_plots(dfs_filtered_by_threshold_mmseqs, 35)
 bubble_plots_bracken <- get_bubble_plots(dfs_filtered_by_threshold_bracken, 35)
+bubble_plots_mmseqs_mean <- get_bubble_plots(dfs_filtered_by_threshold_mmseqs_means, 20)
+
+# Filter data frame (no threshold) for taxa of interest and generate bubble plot
+dfs_filtered_by_threshold_mmseqs_means_total <- filter_by_threshold_mean(refined_mmseqs_df_list, 0)
+df <- dfs_filtered_by_threshold_mmseqs_means_total$genus_bac.txt
+df_taxa_of_interest <- df |>
+  filter(V2 %in% c("Actinospica", "Actinomadura", "Trebonia", "Occallatibacter", "Candidatus Sulfotelmatobacter", "Rhizobacter", "Ilumatobacter", "Amycolatopsis", "Actinocrinis", "Edaphobacter", "Phycicoccus", "Anatilimnocola", "Microbacterium")) 
+list_taxa_of_interest <- list(significant_taxa = df_taxa_of_interest)
+bubble_plot_taxa_of_interest <- get_bubble_plots(list_taxa_of_interest, 40)
+bubble_plot_taxa_of_interest
 
 # Set colour palette for stacked bar plots
-colours_stacked <- distinctColorPalette(150)
+colours_stacked <- distinctColorPalette(450)
 
 # Function to generate list of stacked bar plots from list of data frames
 get_stacked_bar_plots <- function(df_list, legend_text_size) {
@@ -516,6 +559,7 @@ get_stacked_bar_plots <- function(df_list, legend_text_size) {
 # Execute function to create stacked bar plots
 stacked_bar_plots_mmseqs <- get_stacked_bar_plots(dfs_filtered_by_threshold_mmseqs, 25)
 stacked_bar_plots_bracken <- get_stacked_bar_plots(dfs_filtered_by_threshold_bracken, 10)
+stacked_bar_plots_mmseqs_mean <- get_stacked_bar_plots(dfs_filtered_by_threshold_mmseqs_means, 10)
 
 # Function that will create list of combined bubble and stacked bar plots using patchwork
 plot_bubble_stacked_patchwork <- function(plot_list_bubble, plot_list_stacked) {
@@ -538,7 +582,10 @@ mmseqs_patchwork_bubble_stacked
 bracken_patchwork_bubble_stacked <- plot_bubble_stacked_patchwork(bubble_plots_bracken, stacked_bar_plots_bracken)
 bracken_patchwork_bubble_stacked
 
-# Execute to save phylum and gene level bubble plots as .pdf and .svg
+mmseqs_patchwork_bubble_stacked_mean <- plot_bubble_stacked_patchwork(bubble_plots_mmseqs_mean, stacked_bar_plots_mmseqs_mean)
+mmseqs_patchwork_bubble_stacked_mean
+
+# Execute to save bubble plots as .pdf and .svg
 #ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/2a.pdf", plot = bubble_plots_mmseqs[[2]], width = 35, height = 35, units = "in")
 #ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/2a.svg", plot = bubble_plots_mmseqs[[2]], width = 35, height = 35, units = "in")
 
@@ -556,6 +603,31 @@ bracken_patchwork_bubble_stacked
 
 #ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/3c.pdf", plot = bubble_plots_mmseqs[[12]], width = 45, height = 35, units = "in")
 #ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/3c.svg", plot = bubble_plots_mmseqs[[12]], width = 45, height = 35, units = "in")
+
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/2a_1.0_mean.pdf", plot = bubble_plots_mmseqs_mean[[2]], width = 35, height = 35, units = "in")
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/2a_1.0_mean.svg", plot = bubble_plots_mmseqs_mean[[2]], width = 35, height = 35, units = "in")
+
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/2b_1.0_mean.pdf", plot = bubble_plots_mmseqs_mean[[3]], width = 35, height = 35, units = "in")
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/2b_1.0_mean.svg", plot = bubble_plots_mmseqs_mean[[3]], width = 35, height = 35, units = "in")
+
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/2c_1.0_mean.pdf", plot = bubble_plots_mmseqs_mean[[4]], width = 35, height = 35, units = "in")
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/2c_1.0_mean.svg", plot = bubble_plots_mmseqs_mean[[4]], width = 35, height = 35, units = "in")
+
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/3a_1.0_mean.pdf", plot = bubble_plots_mmseqs_mean[[10]], width = 35, height = 35, units = "in")
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/3a_1.0_mean.svg", plot = bubble_plots_mmseqs_mean[[10]], width = 35, height = 35, units = "in")
+
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/3b_1.0_mean.pdf", plot = bubble_plots_mmseqs_mean[[11]], width = 35, height = 35, units = "in")
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/3b_1.0_mean.svg", plot = bubble_plots_mmseqs_mean[[11]], width = 35, height = 35, units = "in")
+
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/3c_1.0_mean.pdf", plot = bubble_plots_mmseqs_mean[[12]], width = 45, height = 35, units = "in")
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/3c_1.0_mean.svg", plot = bubble_plots_mmseqs_mean[[12]], width = 45, height = 35, units = "in")
+
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/significant_genera_original.pdf", plot = bubble_plot_taxa_of_interest[[1]], width = 45, height = 35, units = "in")
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/significant_genera_original.svg", plot = bubble_plot_taxa_of_interest[[1]], width = 45, height = 35, units = "in")
+
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/significant_genera_rescaled.pdf", plot = bubble_plot_taxa_of_interest[[1]], width = 45, height = 35, units = "in")
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/significant_genera_rescaled.svg", plot = bubble_plot_taxa_of_interest[[1]], width = 45, height = 35, units = "in")
+
 
 ## Bracken/mmseqs/total plots
 #ggsave("/Users/johnrobinson/Desktop/2_p_bracken.pdf", plot = bubble_plots_mmseqs[[1]], width = 35, height = 35, units = "in")
@@ -708,7 +780,9 @@ enriched_depleted_ancom_list <- define_enrichment_depletion_status(reduced_ancom
 
 # Execute previous function to filter (based on threshold in percentage) previous data frame list containing relative abundance information for taxa (assigned with bracken OR mmseqs2). Use bracken_ra_df_list_ancom OR refined_mmseqs_df_list for bracken and mmseqs2 respectively.
 ra_list_dfs <- refined_mmseqs_df_list
-filtered_for_ancom_percentage <- filter_by_threshold(ra_list_dfs, 1.0)
+# filtered_for_ancom_percentage <- filter_by_threshold(ra_list_dfs, 1.0)
+# alternatively can use following to filter by mean value for taxa
+filtered_for_ancom_percentage <- filter_by_threshold_mean(ra_list_dfs, 0.1)
 
 # If needed can filter relevant data frames from list of data frames with taxa that meet threshold (e.g. threshold_filtered_for_ancom <- filtered_for_ancom[c(1, 5, 9)] will filter phylum, class, genus from list of mmseqs2 data frames)
 threshold_filtered_for_ancom <- filtered_for_ancom_percentage[c(1, 5, 9)]
@@ -1014,8 +1088,8 @@ pairwise_Adonis_test_dram_ra <- get_pairwise_Adonis(dram_physeq_object_ra, "bray
 pairwise_Adonis_test_dram_ra
 
 # Execute to save DRAM PCoA as .pdf and .svg
-#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/4.pdf", plot = beta_dram_ra, width = 6, height = 7, units = "in")
-#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/4.svg", plot = beta_dram_ra, width = 6, height = 7, units = "in")
+ggsave("/Users/johnrobinson/Desktop/4_revised.pdf", plot = beta_dram_ra, width = 6, height = 7, units = "in")
+ggsave("/Users/johnrobinson/Desktop/4_revised.svg", plot = beta_dram_ra, width = 6, height = 7, units = "in")
 ```
 
 ```{r}
@@ -1117,6 +1191,7 @@ get_dunn_result_for_DRAM <- function(df) {
 
 # Execute dunn on data frame
 dunn_result_for_DRAM <- get_dunn_result_for_DRAM(significant_kegg_function)
+
 
 # Get as data frame
 dunn_result_df <- bind_rows(dunn_result_for_DRAM, .id = "source")
@@ -1298,8 +1373,9 @@ DRAM_MAG_product <- read.delim("/Users/johnrobinson/Desktop/rhizosphere_2025/DRA
 
 MAG_metadata <- read_excel("/Users/johnrobinson/Desktop/rhizosphere_2025/hazelnut_metagenomics_10_17_2024/metadata/Table_SX.xlsx")
 
-# Get MAG names from metadata
+# Get MAG names from metadata (and correct lysobacter)
 MAG_names <- MAG_metadata$Bin_Id
+MAG_names <- sub("Lysobacter_yananisis_MAG30", "Lysobacter_yananisis_MAG-30", MAG_names)
 
 # Add column with taxonomic identifiers for MAGs (from GTDB-Tk)
 DRAM_MAG_product <- DRAM_MAG_product |> mutate(taxonomic_identity = MAG_names, .after = 1)
@@ -1382,7 +1458,7 @@ get_assemblies_formatted_heatmap <- function(df, source_col, bgc_col, num_col) {
     #group_by(source) |>
     #mutate(V1 = V1 / sum(V1) * 100 ) |>
     arrange(factor(source, levels = c("Bulk soil 1", "Bulk soil 2", "Bulk soil 3", "Bulk soil 4", "Native 1", "Native 2", "Native 3", "Native 4", "Native 5", "Susceptible 1", "Susceptible 2", "Susceptible 3", "Susceptible 4", "Susceptible 5", "Resistant 1", "Resistant 2", "Resistant 3", "Resistant 4", "Resistant 5")))
-    return(result)
+    return(result) 
 }
 
 # Execute function to get formatted data frames for heatmap visualizations (assemblies)
@@ -1391,9 +1467,39 @@ antiSMASH_annotation_assemblies_class <- get_assemblies_formatted_heatmap(antiSM
 antiSMASH_annotation_assemblies_product <- get_assemblies_formatted_heatmap(antiSMASH_assemblies, BGC, Product.Prediction, count)
 
 # Execute function to get heatmap plots
-heatmaps_antiSMASH_assemblies_class <- get_heatmaps(antiSMASH_annotation_assemblies_class, "V1", "count_relative", "BGC Class Assemblies", "Predicted BGC Class", "Sample", "Count")
+heatmaps_antiSMASH_assemblies_class <- get_heatmaps(antiSMASH_annotation_assemblies_class, "V1", "count_relative", "BGC Class Assemblies", "Predicted BGC Class", "Sample" ,"Count")
 
 heatmaps_antiSMASH_assemblies_product <- get_heatmaps(antiSMASH_annotation_assemblies_product, "V1", "count_relative", "BGC Product Prediction Assemblies", "Predicted BGC Product", "Sample", "Count")
+
+# Execute function to get formatted data frames for heatmap visualizations (binary) for assemblies
+antiSMASH_annotation_assemblies_class_binary <- antiSMASH_annotation_assemblies_class |>
+  pivot_wider(names_from = "V2", values_from = "V1") |>
+  mutate(across(where(is.numeric), ~replace_na(., 0))) |>
+  mutate(across(where(is.numeric), ~replace(., . >= 1, 1))) |>
+  pivot_longer(cols = -1, values_to = "V1") |>
+  rename("V2" = "name")
+
+antiSMASH_annotation_assemblies_product_binary <- antiSMASH_annotation_assemblies_product |>
+  pivot_wider(names_from = "V2", values_from = "V1") |>
+  mutate(across(where(is.numeric), ~replace_na(., 0))) |>
+  mutate(across(where(is.numeric), ~replace(., . >= 1, 1))) |>
+  pivot_longer(cols = -1, values_to = "V1") |>
+  rename("V2" = "name")
+
+# Execute function to get binary heatmaps
+heatmap_antiSMASH_assemblies_class_binary <- get_heatmaps(antiSMASH_annotation_assemblies_class_binary, "V1", "present_absent", "BGC Class Assemblies", "Predicted BGC Class", "Sample" ,"")
+
+heatmap_antiSMASH_assemblies_product_binary <- get_heatmaps(antiSMASH_annotation_assemblies_product_binary, "V1", "present_absent", "BGC Product Prediction Assemblies", "Predicted BGC Product", "Sample", "")
+
+# Plot with patchwork
+heatmap_antiSMASH_assemblies_class_binary + heatmap_antiSMASH_assemblies_product_binary
+
+# Plot binary heatmaps with ggsave
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/5a.pdf", plot = heatmap_antiSMASH_assemblies_class_binary, width = 35, height = 35, units = "in")
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/5a.svg", plot = heatmap_antiSMASH_assemblies_class_binary, width = 35, height = 35, units = "in")
+
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/5b.pdf", plot = heatmap_antiSMASH_assemblies_product_binary, width = 35, height = 35, units = "in")
+ggsave("/Users/johnrobinson/Desktop/refined_manuscript_pictures/5b.svg", plot = heatmap_antiSMASH_assemblies_product_binary, width = 35, height = 35, units = "in")
 
 # Load relevant BiGSCAPE file (MAGs)
 antiSMASH_MAGs <- read.delim("/Users/johnrobinson/Desktop/rhizosphere_2025/BiG-SCAPE/output_2/network_files/2024-07-25_10-57-37_hybrids_glocal/Network_Annotations_Full.tsv", header = TRUE)
@@ -1553,14 +1659,14 @@ alpha_mmseqs_subset_bar_si <- get_alpha_bar(physeq_object_subset_list_mmseqs, "S
 beta_mmseqs_subset <- get_beta(physeq_object_subset_list_mmseqs, "PCoA", "bray")
 
 # Execute function to get a list of p-values from kruskal wallis for mmseqs2 subset data
-kruskal_test_mmseqs_subset <- get_kruskal_wallis(physeq_object_subset_list_mmseqs, "shannon")
+kruskal_test_mmseqs_subset <- get_kruskal_wallis(physeq_object_subset_list_mmseqs, "simpson")
 
 # Execute function to get a list of p-values from PERMANOVA for mmseqs2 subset data
 permanova_test_mmseqs_subset <- get_PERMANOVA(physeq_object_subset_list_mmseqs, "bray")
 
 # Execute function to get a list of p-values from pairwise.Adonis for mmseqs2 subset data
 pairwise_Adonis_test_mmseqs_subset <- get_pairwise_Adonis(physeq_object_subset_list_mmseqs, "bray")
-
+pairwise_Adonis_test_mmseqs_subset
 # Plot with patchwork (alpha and beta diversity)
 mmseqs_subset_alpha_beta_plots <- plot_patchwork(alpha_mmseqs_subset_boxplots_sh, beta_mmseqs_subset)
 mmseqs_subset_alpha_beta_plots
@@ -1580,6 +1686,92 @@ mmseqs_subset_alpha_beta_plots
 
 ```{r}
 #| label: fig-K
+#| fig-cap: BGC Heatmaps (BGC Length)
+#| fig-width: 15
+#| fig-height: 15
+#| fig-align: center
+#| out-width: 100%
+#| echo: false
+#| warning: false
+
+library(tidyverse)
+library(readxl)
+
+# List relevant files and generate data frame 
+antiSMASH_MAG_paths <- list.files(path = "/Users/johnrobinson/Desktop/antismash_parser-main/MAG_data", pattern = "\\.csv$", full.names = TRUE)
+
+antiSMASH_MAG_full_df <- antiSMASH_MAG_paths |>
+  set_names()|> 
+  map(~read.csv(., header = TRUE)) |> 
+  list_rbind(names_to = "source_file") |>
+  mutate(source_file = basename(source_file))
+
+# Replace any inconsistent labels
+antiSMASH_MAG_full_df$type <- sub("RRE-containing,lassopeptide", "lassopeptide,RRE-containing", antiSMASH_MAG_full_df$type)
+antiSMASH_MAG_full_df$type <- sub("NRPS,T1PKS", "T1PKS,NRPS", antiSMASH_MAG_full_df$type)
+antiSMASH_MAG_full_df$type <- sub("NRPS,NRPS-like", "NRPS-like,NRPS", antiSMASH_MAG_full_df$type)
+antiSMASH_MAG_full_df$type <- sub("thiopeptide,LAP", "LAP,thiopeptide", antiSMASH_MAG_full_df$type)
+
+# Rows to add
+rows_to_add <- data.frame(
+  source_file = c("rhizo_MAG_0017", "rhizo_MAG_0026", "rhizo_MAG_0041", "rhizo_MAG_0044")
+)
+
+# Get relevant MAG metadata and change Lysobacter MAG identifier
+MAG_metadata <- read_excel("/Users/johnrobinson/Desktop/rhizosphere_2025/hazelnut_metagenomics_10_17_2024/metadata/Table_SX.xlsx")
+MAG_metadata$Bin_Id <- sub("Lysobacter_yananisis_MAG30", "Lysobacter_yananisis_MAG-30", MAG_metadata$Bin_Id)
+
+# Process data frame, determine lengths (end - start + 1), and then group by MAG and "type"
+antiSMASH_MAG_processed_df <- antiSMASH_MAG_full_df |>
+  select(source_file, type, start, end) |>
+  mutate(source_file = str_replace(source_file, ".csv", "")) |>
+  mutate(bgc_length = end - start + 1) |>
+  group_by(source_file, type) |>
+  mutate(bgc_length_grouped = sum(bgc_length)) |>
+  ungroup() |>
+  select(source_file, type, bgc_length_grouped) |>
+  unique() |>
+  pivot_wider(names_from = type, values_from = bgc_length_grouped) |>
+  bind_rows(rows_to_add) |>
+  mutate(across(where(is.numeric), ~replace_na(., 0))) |>
+  arrange(source_file) |>
+  mutate(Bin_ID = MAG_metadata$Bin_Id) |>
+  select(-source_file) |>
+  pivot_longer(cols = 1:40, values_to = "value")
+
+# Generate heatmap
+antiSMASH_MAG_heatmap_size <- ggplot(antiSMASH_MAG_processed_df, aes(x = name, y = Bin_ID, fill = value)) +
+  geom_tile(color = "black", linewidth = 0.1) +
+  coord_fixed(ratio = 1) +
+  scale_fill_gradient2(low = "white", high = "red",
+                       midpoint = 0,
+                       limits = c(min(antiSMASH_MAG_processed_df$value, na.rm = TRUE),
+                                  max(antiSMASH_MAG_processed_df$value, na.rm = TRUE))) +
+  scale_y_discrete(limits = rev(unique(antiSMASH_MAG_processed_df$Bin_ID))) +
+  theme(
+    title = element_text(size = 10),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 7),
+    axis.text.y = element_text(size = 7),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.title.x = element_text(margin = margin(t = 20)),
+    legend.key.size = unit(0.5, "cm"),
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 7, margin = margin(b = 5)), 
+    plot.margin = margin(b = 20, l = 20, r = 20, t = 20, unit = "pt")
+  ) +
+  labs(#title = title,
+    x = "BGC Type",
+    y = "MAG",
+    fill = "BGC nucleotide count")
+
+# Save to relevant formats
+ggsave("/Users/johnrobinson/Desktop/antiSMASH_MAG_heatmap_bgc_nucleotide_count.pdf", plot = antiSMASH_MAG_heatmap_size, width = 10, height = 10)
+ggsave("/Users/johnrobinson/Desktop/antiSMASH_MAG_heatmap_bgc_nucleotide_count.svg", plot = antiSMASH_MAG_heatmap_size, width = 10, height = 10)
+```
+
+```{r}
+#| label: fig-L
 #| fig-cap: Additional analysis
 #| fig-width: 15
 #| fig-height: 15
