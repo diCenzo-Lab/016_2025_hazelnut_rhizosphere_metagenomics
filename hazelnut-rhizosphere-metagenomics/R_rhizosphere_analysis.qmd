@@ -17,7 +17,7 @@ library(phyloseq)
 ## Upload and process relevant mmseqs2 data. Create phyloseq objects for mmseqs2 output (phylum, class, genus, species level). 
 
 # Get relevant file paths from directory (mmseqs2)
-file_paths_total <- list.files("/Users/johnrobinson/Desktop/rhizosphere_2025/krona_input_2024_09_25/", pattern = "(phylum|phylum_bac|phylum_arc|phylum_euk|class|class_bac|class_arc|class_euk|genus|genus_bac|genus_arc|genus_euk|species|species_bac|species_arc|species_euk)[.]txt$", recursive = TRUE, full.names = TRUE)
+file_paths_total <- list.files("/Volumes/OWC_Gemini/hazelnut_rhizosphere_November_25_2025/rhizosphere_2025/krona_input_2024_09_25/", pattern = "(phylum|phylum_bac|phylum_arc|phylum_euk|class|class_bac|class_arc|class_euk|genus|genus_bac|genus_arc|genus_euk|species|species_bac|species_arc|species_euk)[.]txt$", recursive = TRUE, full.names = TRUE)
 
 # Combine all entries from relevant files into single data frame (mmseqs2)
 rhizosphere_full_df <- file_paths_total |>
@@ -41,7 +41,7 @@ get_dfs_as_list <- function(source_file_categories, df, source_col) {
 # Create data frame list (mmseqs2)
 mmseqs_df_list <- get_dfs_as_list(taxonomy_categories, rhizosphere_full_df, source_file)
 
-# Function to transform data in list of data frames of interest to proper format
+# Function to transform data in list of data frames of interest to proper format (relative abundance)
 transform_df_list <- function(df_list, source_col, taxa_col, num_col) {
   result <- list()
   list_names <- names(df_list)
@@ -62,8 +62,28 @@ transform_df_list <- function(df_list, source_col, taxa_col, num_col) {
   return(result)
 }
 
+# Function to transform data in list of data frames of interest to proper format (counts data)
+transform_df_list_obs <- function(df_list, source_col, taxa_col, num_col) {
+  result <- list()
+  list_names <- names(df_list)
+  for (i in list_names) {
+    current_df <- df_list[[i]]
+    result[[i]] <- current_df |> group_by({{source_col}}, {{taxa_col}}) |>
+      mutate({{num_col}} := sum({{num_col}}, na.rm = TRUE)) |>
+      ungroup() |>
+      distinct() |>
+      select({{taxa_col}}, {{num_col}}, {{source_col}}) |>
+      pivot_wider(names_from = {{source_col}}, values_from = {{num_col}}) |>
+      mutate(across(where(is.numeric), ~replace_na(., 0)))
+  }
+  return(result)
+}
+
 # Transform data frames in list (mmseqs2)
 refined_mmseqs_df_list <- transform_df_list(mmseqs_df_list, source_file, V2, V1)
+
+# Transfrom data frames in list (observed)
+refined_mmseqs_df_list_obs <- transform_df_list_obs(mmseqs_df_list, source_file, V2, V1)
 
 # Function that makes list of phyloseq objects from list of data frames
 process_df_to_phyloseq <- function(df_list) {
@@ -104,41 +124,50 @@ process_df_to_phyloseq <- function(df_list) {
 # Get phyloseq objects from list of data frames
 physeq_object_list_mmseqs <- process_df_to_phyloseq(refined_mmseqs_df_list)
 
-## Upload bracken data (phylum, genus, species)
-combined_phylum_bracken <- read.delim("/Users/johnrobinson/Desktop/rhizosphere_2025/hazelnut_metagenomics_10_17_2024/kraken2_confidence_051/kraken2_confidence_0.51_data_and_inital_scripts/combined.phylum.bracken", header = TRUE)
-combined_genus_bracken <- read.delim("/Users/johnrobinson/Desktop/rhizosphere_2025/hazelnut_metagenomics_10_17_2024/kraken2_confidence_051/kraken2_confidence_0.51_data_and_inital_scripts/combined.genus.bracken", header = TRUE)
-combined_species_bracken <- read.delim("/Users/johnrobinson/Desktop/rhizosphere_2025/hazelnut_metagenomics_10_17_2024/kraken2_confidence_051/kraken2_confidence_0.51_data_and_inital_scripts/combined.species.bracken", header = TRUE)
+# Get phlyoseq objects form list of data frames (observed) 
+physeq_object_list_mmseqs_obs <- process_df_to_phyloseq(refined_mmseqs_df_list_obs)
+
+# Convert all phyloseq objects in list to integers (observed)
+phyloseq_list_int <- lapply(physeq_object_list_mmseqs_obs, function(pl) {
+  otu_table(pl) <- round(otu_table(pl))
+  return(pl)
+})
+
+## Upload bracken data (trimmed) (phylum, genus, species)
+combined_phylum_bracken_trim <- read.delim("/Volumes/OWC_Gemini/bracken_2026/kraken2_output_confidence_0.51/trimmomatic/combined.phylum.bracken", header = TRUE)
+combined_genus_bracken_trim <- read.delim("/Volumes/OWC_Gemini/bracken_2026/kraken2_output_confidence_0.51/trimmomatic/combined.genus.bracken", header = TRUE)
+combined_species_bracken_trim <- read.delim("/Volumes/OWC_Gemini/bracken_2026/kraken2_output_confidence_0.51/trimmomatic/combined.species.bracken", header = TRUE)
 
 ## Create list of bracken data frames with relative abundance values and create corresponding phyloseq objects
 # Remove unneeded columns (get relative abundance)
-combined_phylum_bracken_1 <- combined_phylum_bracken |> dplyr::select("name", "Control_B2.phylum.bracken_frac", "Control_B3.phylum.bracken_frac", "Control_B4.phylum.bracken_frac", "Control_B5.phylum.bracken_frac", "R1P1.phylum.bracken_frac", "R1P14.phylum.bracken_frac", "R1P18.phylum.bracken_frac", "R1P5.phylum.bracken_frac", "R1P9.phylum.bracken_frac",  "R3P10_neg.phylum.bracken_frac", "R3P11.phylum.bracken_frac", "R3P12_neg.phylum.bracken_frac", "R3P14_neg.phylum.bracken_frac", "R3P15.phylum.bracken_frac", "R3P18_neg.phylum.bracken_frac", "R3P20.phylum.bracken_frac", "R3P3.phylum.bracken_frac", "R3P5.phylum.bracken_frac", "R3P9_neg.phylum.bracken_frac")
+combined_phylum_bracken_1_trimmed <- combined_phylum_bracken_trim |> dplyr::select("name", "Control_B2.phylum.bracken_frac", "Control_B3.phylum.bracken_frac", "Control_B4.phylum.bracken_frac", "Control_B5.phylum.bracken_frac", "R1P1.phylum.bracken_frac", "R1P14.phylum.bracken_frac", "R1P18.phylum.bracken_frac", "R1P5.phylum.bracken_frac", "R1P9.phylum.bracken_frac",  "R3P10_neg.phylum.bracken_frac", "R3P11.phylum.bracken_frac", "R3P12_neg.phylum.bracken_frac", "R3P14_neg.phylum.bracken_frac", "R3P15.phylum.bracken_frac", "R3P18_neg.phylum.bracken_frac", "R3P20.phylum.bracken_frac", "R3P3.phylum.bracken_frac", "R3P5.phylum.bracken_frac", "R3P9_neg.phylum.bracken_frac")
 
 # Remove unneeded columns (get relative abundance)
-combined_genus_bracken_1 <- combined_genus_bracken |> dplyr::select("name", "Control_B2.genus.bracken_frac", "Control_B3.genus.bracken_frac", "Control_B4.genus.bracken_frac", "Control_B5.genus.bracken_frac", "R1P1.genus.bracken_frac", "R1P14.genus.bracken_frac", "R1P18.genus.bracken_frac", "R1P5.genus.bracken_frac", "R1P9.genus.bracken_frac",  "R3P10_neg.genus.bracken_frac", "R3P11.genus.bracken_frac", "R3P12_neg.genus.bracken_frac", "R3P14_neg.genus.bracken_frac", "R3P15.genus.bracken_frac", "R3P18_neg.genus.bracken_frac", "R3P20.genus.bracken_frac", "R3P3.genus.bracken_frac", "R3P5.genus.bracken_frac", "R3P9_neg.genus.bracken_frac")
+combined_genus_bracken_1_trimmed <- combined_genus_bracken_trim |> dplyr::select("name", "Control_B2.genus.bracken_frac", "Control_B3.genus.bracken_frac", "Control_B4.genus.bracken_frac", "Control_B5.genus.bracken_frac", "R1P1.genus.bracken_frac", "R1P14.genus.bracken_frac", "R1P18.genus.bracken_frac", "R1P5.genus.bracken_frac", "R1P9.genus.bracken_frac",  "R3P10_neg.genus.bracken_frac", "R3P11.genus.bracken_frac", "R3P12_neg.genus.bracken_frac", "R3P14_neg.genus.bracken_frac", "R3P15.genus.bracken_frac", "R3P18_neg.genus.bracken_frac", "R3P20.genus.bracken_frac", "R3P3.genus.bracken_frac", "R3P5.genus.bracken_frac", "R3P9_neg.genus.bracken_frac")
 
 # Remove unneeded columns (get relative abundance)
-combined_species_bracken_1 <- combined_species_bracken |> dplyr::select("name", "Control_B2.species.bracken_frac", "Control_B3.species.bracken_frac", "Control_B4.species.bracken_frac", "Control_B5.species.bracken_frac", "R1P1.species.bracken_frac", "R1P14.species.bracken_frac", "R1P18.species.bracken_frac", "R1P5.species.bracken_frac", "R1P9.species.bracken_frac",  "R3P10_neg.species.bracken_frac", "R3P11.species.bracken_frac", "R3P12_neg.species.bracken_frac", "R3P14_neg.species.bracken_frac", "R3P15.species.bracken_frac", "R3P18_neg.species.bracken_frac", "R3P20.species.bracken_frac", "R3P3.species.bracken_frac", "R3P5.species.bracken_frac", "R3P9_neg.species.bracken_frac")
+combined_species_bracken_1_trimmed <- combined_species_bracken_trim |> dplyr::select("name", "Control_B2.species.bracken_frac", "Control_B3.species.bracken_frac", "Control_B4.species.bracken_frac", "Control_B5.species.bracken_frac", "R1P1.species.bracken_frac", "R1P14.species.bracken_frac", "R1P18.species.bracken_frac", "R1P5.species.bracken_frac", "R1P9.species.bracken_frac",  "R3P10_neg.species.bracken_frac", "R3P11.species.bracken_frac", "R3P12_neg.species.bracken_frac", "R3P14_neg.species.bracken_frac", "R3P15.species.bracken_frac", "R3P18_neg.species.bracken_frac", "R3P20.species.bracken_frac", "R3P3.species.bracken_frac", "R3P5.species.bracken_frac", "R3P9_neg.species.bracken_frac")
 
 # Generate bracken list with data frames that have unneeded columns removed
-bracken_list <- list(combined_phylum_bracken_1 = combined_phylum_bracken_1, combined_genus_bracken_1 = combined_genus_bracken_1, combined_species_bracken_1 = combined_species_bracken_1)
+bracken_list_trimmed <- list(combined_phylum_bracken_1_trimmed = combined_phylum_bracken_1_trimmed, combined_genus_bracken_1_trimmed = combined_genus_bracken_1_trimmed, combined_species_bracken_1_trimmed = combined_species_bracken_1_trimmed)
 
 # Rename relevant columns in bracken
-bracken_list[[1]] <- bracken_list[[1]] |> rename(V2 = name)
-bracken_list[[2]] <- bracken_list[[2]] |> rename(V2 = name)
-bracken_list[[3]] <- bracken_list[[3]] |> rename(V2 = name)
+bracken_list_trimmed[[1]] <- bracken_list_trimmed[[1]] |> rename(V2 = name)
+bracken_list_trimmed[[2]] <- bracken_list_trimmed[[2]] |> rename(V2 = name)
+bracken_list_trimmed[[3]] <- bracken_list_trimmed[[3]] |> rename(V2 = name)
 
 # Execute function to generate list of phyloseq objects from bracken data
-physeq_object_list_bracken <- process_df_to_phyloseq(bracken_list)
+physeq_object_list_bracken <- process_df_to_phyloseq(bracken_list_trimmed)
 
 ## Create list of bracken data frames with count values and relative abundance (percentage). Data in this format will be used in ancombc2.
 # Remove unneeded columns (get counts)
-combined_phylum_bracken_num <- combined_phylum_bracken |> dplyr::select("name", "Control_B2.phylum.bracken_num", "Control_B3.phylum.bracken_num", "Control_B4.phylum.bracken_num", "Control_B5.phylum.bracken_num", "R1P1.phylum.bracken_num", "R1P14.phylum.bracken_num", "R1P18.phylum.bracken_num", "R1P5.phylum.bracken_num", "R1P9.phylum.bracken_num",  "R3P10_neg.phylum.bracken_num", "R3P11.phylum.bracken_num", "R3P12_neg.phylum.bracken_num", "R3P14_neg.phylum.bracken_num", "R3P15.phylum.bracken_num", "R3P18_neg.phylum.bracken_num", "R3P20.phylum.bracken_num", "R3P3.phylum.bracken_num", "R3P5.phylum.bracken_num", "R3P9_neg.phylum.bracken_num")
+combined_phylum_bracken_num <- combined_phylum_bracken_trim |> dplyr::select("name", "Control_B2.phylum.bracken_num", "Control_B3.phylum.bracken_num", "Control_B4.phylum.bracken_num", "Control_B5.phylum.bracken_num", "R1P1.phylum.bracken_num", "R1P14.phylum.bracken_num", "R1P18.phylum.bracken_num", "R1P5.phylum.bracken_num", "R1P9.phylum.bracken_num",  "R3P10_neg.phylum.bracken_num", "R3P11.phylum.bracken_num", "R3P12_neg.phylum.bracken_num", "R3P14_neg.phylum.bracken_num", "R3P15.phylum.bracken_num", "R3P18_neg.phylum.bracken_num", "R3P20.phylum.bracken_num", "R3P3.phylum.bracken_num", "R3P5.phylum.bracken_num", "R3P9_neg.phylum.bracken_num")
 
 # Remove unneeded columns (get counts)
-combined_genus_bracken_num <- combined_genus_bracken |> dplyr::select("name", "Control_B2.genus.bracken_num", "Control_B3.genus.bracken_num", "Control_B4.genus.bracken_num", "Control_B5.genus.bracken_num", "R1P1.genus.bracken_num", "R1P14.genus.bracken_num", "R1P18.genus.bracken_num", "R1P5.genus.bracken_num", "R1P9.genus.bracken_num",  "R3P10_neg.genus.bracken_num", "R3P11.genus.bracken_num", "R3P12_neg.genus.bracken_num", "R3P14_neg.genus.bracken_num", "R3P15.genus.bracken_num", "R3P18_neg.genus.bracken_num", "R3P20.genus.bracken_num", "R3P3.genus.bracken_num", "R3P5.genus.bracken_num", "R3P9_neg.genus.bracken_num")
+combined_genus_bracken_num <- combined_genus_bracken_trim |> dplyr::select("name", "Control_B2.genus.bracken_num", "Control_B3.genus.bracken_num", "Control_B4.genus.bracken_num", "Control_B5.genus.bracken_num", "R1P1.genus.bracken_num", "R1P14.genus.bracken_num", "R1P18.genus.bracken_num", "R1P5.genus.bracken_num", "R1P9.genus.bracken_num",  "R3P10_neg.genus.bracken_num", "R3P11.genus.bracken_num", "R3P12_neg.genus.bracken_num", "R3P14_neg.genus.bracken_num", "R3P15.genus.bracken_num", "R3P18_neg.genus.bracken_num", "R3P20.genus.bracken_num", "R3P3.genus.bracken_num", "R3P5.genus.bracken_num", "R3P9_neg.genus.bracken_num")
 
 # Remove unneeded columns (get counts)
-combined_species_bracken_num <- combined_species_bracken |> dplyr::select("name", "Control_B2.species.bracken_num", "Control_B3.species.bracken_num", "Control_B4.species.bracken_num", "Control_B5.species.bracken_num", "R1P1.species.bracken_num", "R1P14.species.bracken_num", "R1P18.species.bracken_num", "R1P5.species.bracken_num", "R1P9.species.bracken_num",  "R3P10_neg.species.bracken_num", "R3P11.species.bracken_num", "R3P12_neg.species.bracken_num", "R3P14_neg.species.bracken_num", "R3P15.species.bracken_num", "R3P18_neg.species.bracken_num", "R3P20.species.bracken_num", "R3P3.species.bracken_num", "R3P5.species.bracken_num", "R3P9_neg.species.bracken_num")
+combined_species_bracken_num <- combined_species_bracken_trim |> dplyr::select("name", "Control_B2.species.bracken_num", "Control_B3.species.bracken_num", "Control_B4.species.bracken_num", "Control_B5.species.bracken_num", "R1P1.species.bracken_num", "R1P14.species.bracken_num", "R1P18.species.bracken_num", "R1P5.species.bracken_num", "R1P9.species.bracken_num",  "R3P10_neg.species.bracken_num", "R3P11.species.bracken_num", "R3P12_neg.species.bracken_num", "R3P14_neg.species.bracken_num", "R3P15.species.bracken_num", "R3P18_neg.species.bracken_num", "R3P20.species.bracken_num", "R3P3.species.bracken_num", "R3P5.species.bracken_num", "R3P9_neg.species.bracken_num")
 
 # Generate bracken list with data frames that have unneeded columns removed
 bracken_list_num <- list(combined_phylum_bracken_1 = combined_phylum_bracken_num, combined_genus_bracken_1 = combined_genus_bracken_num, combined_species_bracken_1 = combined_species_bracken_num)
@@ -147,6 +176,9 @@ bracken_list_num <- list(combined_phylum_bracken_1 = combined_phylum_bracken_num
 bracken_list_num[[1]] <- bracken_list_num[[1]] |> rename(V2 = name)
 bracken_list_num[[2]] <- bracken_list_num[[2]] |> rename(V2 = name)
 bracken_list_num[[3]] <- bracken_list_num[[3]] |> rename(V2 = name)
+
+## phyloseq object or obs
+physeq_object_list_bracken_num <- process_df_to_phyloseq(bracken_list_num)
 
 # Function to reformat list of bracken data frames
 transform_bracken_to_mmseqs_initial_format <- function(df_list) {
@@ -226,7 +258,7 @@ get_alpha_boxplot <- function(physeq_object_list, alpha_diversity_measure) {
   return(result)
 }
 
-# Function that plots alpha diversity from list of phyloseq objects
+## Function that plots alpha diversity from list of phyloseq objects
 get_alpha_bar <- function(physeq_object_list, alpha_diversity_measure) {
   result <- list()
   list_names <- names(physeq_object_list)
@@ -238,9 +270,9 @@ get_alpha_bar <- function(physeq_object_list, alpha_diversity_measure) {
     current_alpha$layers[[1]]$aes_params$alpha <- 0 
     current_alpha_final <- current_alpha +
       stat_summary(fun = mean, geom = "bar", aes(fill = Condition), alpha = 0.5) +
-      geom_jitter(width = 0.08) +
+      geom_jitter(width = 0.08, aes(group = NULL)) +
       labs(x = "",
-           y = paste0(alpha_diversity_measure, " Diversity Index")) +
+           y = paste0(alpha_diversity_measure, " Species Richness")) +
       scale_color_manual(values = colours) +
       scale_fill_manual(values = colours) +
       stat_cor() +
@@ -250,6 +282,10 @@ get_alpha_bar <- function(physeq_object_list, alpha_diversity_measure) {
       current_alpha_final <- current_alpha_final +
         scale_y_continuous(breaks = c(3.7, 3.8, 3.9, 4.0, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8)) +
         coord_cartesian(ylim = c(3.7, 4.8))
+    } else if(alpha_diversity_measure == "Observed") {
+      current_alpha_final <- current_alpha_final +
+        scale_y_continuous(breaks = seq(0, 10000, by = 500)) +
+        coord_cartesian(ylim = c(1, 10000))
     } else {
       current_alpha_final <- current_alpha_final +
         scale_y_continuous(breaks = c(0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98)) +
@@ -305,7 +341,7 @@ get_kruskal_wallis <- function(physeq_object_list, measure_type) {
   list_names <- names(physeq_object_list)
   for (i in list_names) {
     current_physeq_obj <- physeq_object_list[[i]]
-    current_alpha <- estimate_richness(current_physeq_obj, measures = c("observed", measure_type))
+    current_alpha <- estimate_richness(current_physeq_obj, measures = c(measure_type))
     current_kruskal_wallis <- kruskal.test(current_alpha[,1] ~ sample_data(current_physeq_obj)$Condition)
     result[[i]] <- current_kruskal_wallis
   }
@@ -338,27 +374,21 @@ get_pairwise_Adonis <- function(physeq_object_list, distance_matrix) {
   return(result)
 }
 
-# Execute function to get a list of alpha diversity plots
-alpha_mmseqs <- get_alpha(physeq_object_list_mmseqs, "Shannon")
-alpha_bracken <- get_alpha(physeq_object_list_bracken, "Shannon")
-
-# Execute function to get a list of alpha diversity plots (as boxplots)
-alpha_mmseqs_boxplot <- get_alpha_boxplot(physeq_object_list_mmseqs, "Shannon")
-alpha_bracken_boxplot <- get_alpha_boxplot(physeq_object_list_bracken, "Shannon")
-
 # Execute function to get a list of alpha diversity plots (as bar)
-alpha_mmseqs_bar_sh <- get_alpha_bar(physeq_object_list_mmseqs, "Shannon")
-alpha_bracken_bar_sh <- get_alpha_bar(physeq_object_list_bracken, "Shannon")
 alpha_mmseqs_bar_si <- get_alpha_bar(physeq_object_list_mmseqs, "Simpson")
 alpha_bracken_bar_si <- get_alpha_bar(physeq_object_list_bracken, "Simpson")
+
+## Get observed mmseqs
+alpha_bracken_obs <- get_alpha_bar(physeq_object_list_bracken_num, "Observed")
+alpha_mmseqs_obs <- get_alpha_bar(phyloseq_list_int, "Observed")
 
 # Execute function to get a list of beta diversity plots
 beta_mmseqs <- get_beta(physeq_object_list_mmseqs, "PCoA", "bray")
 beta_bracken <- get_beta(physeq_object_list_bracken, "PCoA", "bray", "no")
 
 # Execute function to get a list of p-values from kruskal wallis
-kruskal_test_mmseqs <- get_kruskal_wallis(physeq_object_list_mmseqs, "simpson")
-kruskal_test_bracken <- get_kruskal_wallis(physeq_object_list_bracken, "shannon")
+kruskal_test_mmseqs <- get_kruskal_wallis(physeq_object_list_mmseqs, "Simpson")
+kruskal_test_mmseqs_obs <- get_kruskal_wallis(phyloseq_list_int, "Observed")
 
 # Execute function to get a list of p-values from PERMANOVA
 permanova_test_mmseqs <- get_PERMANOVA(physeq_object_list_mmseqs, "bray")
@@ -382,38 +412,10 @@ plot_patchwork <- function(plot_list_alpha, plot_list_beta) {
   return(result)
 }
 
-# Execute patchwork function
-mmseqs_patchwork_alpha_beta <- plot_patchwork(alpha_mmseqs_boxplot, beta_mmseqs)
-mmseqs_patchwork_alpha_beta
+# Save species level diversity plots as .pdf and .svg
+ggsave("/Users/johnrobinson/Desktop/gd_March_29_2026/observed_species_mmseqs.pdf", plot = alpha_mmseqs_obs[[13]], width = 6, height = 7, units = "in")
 
-bracken_patchwork_alpha_beta <- plot_patchwork(alpha_bracken_boxplot, beta_bracken)
-bracken_patchwork_alpha_beta
-
-# Execute to save species level alpha and beta diversity as .pdf and .svg
-#library(svglite)
-#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/1a.pdf", plot = alpha_mmseqs_bar_sh[[13]], width = 6, height = 7, units = "in")
-
-#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/1a.svg", plot = alpha_mmseqs_bar_sh[[13]], width = 6, height = 7, units = "in")
-
-#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/1b.pdf", plot = alpha_mmseqs_bar_si[[13]], width = 6, height = 7, units = "in")
-
-#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/1b.svg", plot = alpha_mmseqs_bar_si[[13]], width = 6, height = 7, units = "in")
-
-#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/1c.pdf", plot = beta_mmseqs[[13]], width = 6, height = 7, units = "in")
-
-#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/1c.svg", plot = beta_mmseqs[[13]], width = 6, height = 7, units = "in")
-
-#ggsave("/Users/johnrobinson/Desktop/1_bracken_a.pdf", plot = alpha_bracken_boxplot[[3]], width = 6, height = 7, units = "in")
-
-#ggsave("/Users/johnrobinson/Desktop/1_bracken_b.pdf", plot = alpha_bracken_boxplot[[3]], width = 6, height = 7, units = "in")
-
-#ggsave("/Users/johnrobinson/Desktop/1_bracken_c.pdf", plot = beta_bracken[[3]], width = 6, height = 7, units = "in")
-
-ggsave("/Users/johnrobinson/Desktop/1_bracken_sh.pdf", plot = alpha_bracken_bar_sh[[3]], width = 6, height = 7, units = "in")
-
-ggsave("/Users/johnrobinson/Desktop/1_bracken_s9.pdf", plot = alpha_bracken_bar_si[[3]], width = 6, height = 7, units = "in")
-
-ggsave("/Users/johnrobinson/Desktop/1_bracken_beta.pdf", plot = beta_bracken[[3]], width = 6, height = 7, units = "in")
+ggsave("/Users/johnrobinson/Desktop/gd_March_29_2026/observed_species_mmseqs.svg", plot = alpha_mmseqs_obs[[13]], width = 6, height = 7, units = "in")
 ```
 
 ```{r}
@@ -1666,7 +1668,7 @@ pairwise_Adonis_test_antiSMASH_ra <- get_pairwise_Adonis(physeq_antiSMASH_pcoa, 
 ## Upload and process relevant mmseqs2 subset data. Create phyloseq objects for mmseqs2 output (genus, species level). Visualize alpha and beta diversity and perform statistical analysis.
 
 # Get relevant file paths from directory (mmseqs2 subset)
-file_paths_subset_total <- list.files("/Users/johnrobinson/Desktop/rhizosphere_2025/subset_mmseqs2_output_2024_10_05/krona_input/", pattern = "(genus|species)[.]txt$", recursive = TRUE, full.names = TRUE)
+file_paths_subset_total <- list.files("/Volumes/OWC_Gemini/hazelnut_rhizosphere_November_25_2025/rhizosphere_2025/subset_mmseqs2_output_2024_10_05/krona_input/", pattern = "(genus|species)[.]txt$", recursive = TRUE, full.names = TRUE)
 
 # Combine all entries from relevant mmseqs2 subset files into single data frame
 rhizosphere_full_subset_df <- file_paths_subset_total |>
@@ -1681,51 +1683,43 @@ mmseqs_subset_df_list <- get_dfs_as_list(taxonomy_categories, rhizosphere_full_s
 
 # Transform data frames in list (mmseqs2 subset)
 refined_mmseqs_df_subset_list <- transform_df_list(mmseqs_subset_df_list, source_file, V2, V1)
+refined_mmseqs_df_subset_list_obs <- transform_df_list_obs(mmseqs_subset_df_list, source_file, V2, V1)
 
 # Get phyloseq objects from list of data frames 
 physeq_object_subset_list_mmseqs <- process_df_to_phyloseq(refined_mmseqs_df_subset_list)
+physeq_object_subset_list_mmseqs_obs <- process_df_to_phyloseq(refined_mmseqs_df_subset_list_obs)
 
-# Sample order (order samples for alpha diversity plots)
+# Convert all phyloseq objects in list to integers (observed)
+phyloseq_list_int_subset <- lapply(physeq_object_subset_list_mmseqs_obs, function(pl) {
+  otu_table(pl) <- round(otu_table(pl))
+  return(pl)
+})
+
+# Sample order (order samples for alpha diversity)
 desired_order <- c("B2", "B3", "B4", "B5", "R1P1", "R1P5", "R1P9", "R1P14", "R1P18", "R3P3", "R3P5", "R3P11", "R3P15", "R3P20", "R3P9_neg", "R3P10_neg", "R3P12_neg", "R3P14_neg", "R3P18_neg")
 
-# Execute function to get a list of alpha diversity plots for mmseqs2 subset data
-alpha_mmseqs_subset <- get_alpha(physeq_object_subset_list_mmseqs, "Shannon")
-
-# Execute function to get a list of alpha diversity plots for mmseqs2 subset data (boxplots)
-alpha_mmseqs_subset_boxplots_sh <- get_alpha_boxplot(physeq_object_subset_list_mmseqs, "Shannon")
-alpha_mmseqs_subset_boxplots_si <- get_alpha_boxplot(physeq_object_subset_list_mmseqs, "Simpson")
-
 # Execute function to get a list of alpha diversity plots for mmseqs2 subset data (bar)
-alpha_mmseqs_subset_bar_sh <- get_alpha_bar(physeq_object_subset_list_mmseqs, "Shannon")
 alpha_mmseqs_subset_bar_si <- get_alpha_bar(physeq_object_subset_list_mmseqs, "Simpson")
+alpha_mmseqs_subset_obs <- get_alpha_bar(phyloseq_list_int_subset, "Observed")
 
 # Execute function to get a list of beta diversity plots for mmseqs2 subset data
 beta_mmseqs_subset <- get_beta(physeq_object_subset_list_mmseqs, "PCoA", "bray")
 
 # Execute function to get a list of p-values from kruskal wallis for mmseqs2 subset data
-kruskal_test_mmseqs_subset <- get_kruskal_wallis(physeq_object_subset_list_mmseqs, "simpson")
+kruskal_test_mmseqs_subset_si <- get_kruskal_wallis(physeq_object_subset_list_mmseqs, "Simpson")
+
+kruskal_test_mmseqs_subset_obs <- get_kruskal_wallis(phyloseq_list_int_subset, "Observed")
 
 # Execute function to get a list of p-values from PERMANOVA for mmseqs2 subset data
 permanova_test_mmseqs_subset <- get_PERMANOVA(physeq_object_subset_list_mmseqs, "bray")
 
 # Execute function to get a list of p-values from pairwise.Adonis for mmseqs2 subset data
 pairwise_Adonis_test_mmseqs_subset <- get_pairwise_Adonis(physeq_object_subset_list_mmseqs, "bray")
-pairwise_Adonis_test_mmseqs_subset
-# Plot with patchwork (alpha and beta diversity)
-mmseqs_subset_alpha_beta_plots <- plot_patchwork(alpha_mmseqs_subset_boxplots_sh, beta_mmseqs_subset)
-mmseqs_subset_alpha_beta_plots
 
-# Execute to get as .pdf and .svg
-#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/S1a.pdf", plot = alpha_mmseqs_subset_bar_sh[[2]], width = 6, height = 7, units = "in")
+# Execute as .pdf and .svg
+ggsave("/Users/johnrobinson/Desktop/gd_March_29_2026/observed_species_mmseqs_subset.pdf", plot = alpha_mmseqs_subset_obs[[2]], width = 6, height = 7, units = "in")
 
-#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/S1a.svg", plot = alpha_mmseqs_subset_bar_sh[[2]], width = 6, height = 7, units = "in")
-
-#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/S1b.pdf", plot = alpha_mmseqs_subset_bar_si[[2]], width = 6, height = 7, units = "in")
-#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/S1b.svg", plot = alpha_mmseqs_subset_bar_si[[2]], width = 6, height = 7, units = "in")
-
-#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/S1c.pdf", plot = beta_mmseqs_subset[[2]], width = 6, height = 7, units = "in")
-
-#ggsave("/Users/johnrobinson/Desktop/rhizosphere_manuscript_pictures/S1c.svg", plot = beta_mmseqs_subset[[2]], width = 6, height = 7, units = "in")
+ggsave("/Users/johnrobinson/Desktop/gd_March_29_2026/observed_species_mmseqs_subset.svg", plot = alpha_mmseqs_subset_obs[[2]], width = 6, height = 7, units = "in")
 ```
 
 ```{r}
